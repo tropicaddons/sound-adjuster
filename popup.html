@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sound Controller</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+      background-color: #1e1e2f;
+      color: #ffffff;
+    }
+
+    h1 {
+      font-size: 1.5em;
+      margin-bottom: 20px;
+    }
+
+    .slider-container {
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 8px;
+      background: #444;
+      border-radius: 5px;
+      outline: none;
+      transition: background 0.3s;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #008cba;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      background: #005f73;
+    }
+
+    .slider-value {
+      margin-top: 5px;
+      font-size: 0.9em;
+      color: #bbbbbb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sound Controller</h1>
+
+  <div class="slider-container">
+    <label for="gain">Gain (Volume Level):</label>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <input id="gain" type="range" min="0" max="3" step="0.1" value="1" style="flex: 1;">
+      <input id="gain-input" type="number" min="0" max="3" step="0.1" value="1" style="width: 60px; padding: 5px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px;">
+    </div>
+    <div class="slider-value">Gain: <span id="gain-value">1.0</span></div>
+  </div>
+
+  <div class="slider-container">
+    <label for="pan">Pan (Stereo Balance):</label>
+    <input id="pan" type="range" min="-1" max="1" step="0.1" value="0">
+    <div class="slider-value">Pan: <span id="pan-value">0.0</span></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

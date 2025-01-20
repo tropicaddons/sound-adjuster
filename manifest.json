@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "Tab Sound Adjuster",
+  "version": "1.1",
+  "description": "Control the volume (gain) and stereo balance (pan) of audio in tabs.",
+  "permissions": ["activeTab", "tabs", "webNavigation"],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "Sound Adjuster"
+  }
+}
