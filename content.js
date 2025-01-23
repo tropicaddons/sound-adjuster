@@ -1,9 +1,8 @@
-<<<<<<< HEAD
 let audioContext;
 let gainNode;
 let panNode;
 
-// AudioContext'i başlat
+// Initialize AudioContext
 function setupAudioContext() {
   if (!audioContext) {
     audioContext = new AudioContext();
@@ -14,29 +13,29 @@ function setupAudioContext() {
   }
 }
 
-// Yeni video elementlerini bağla
+// Attach to new video elements
 function attachToVideos() {
   const mediaElements = document.querySelectorAll("video");
   mediaElements.forEach((video) => {
     if (!video.hasAttribute("data-audio-connected")) {
       try {
-        // Cross-origin sorunlarını aşmak için
+        // To bypass cross-origin issues
         video.crossOrigin = "anonymous";
         const source = audioContext.createMediaElementSource(video);
         source.connect(gainNode);
         video.setAttribute("data-audio-connected", "true");
-        console.log("Video bağlandı:", video);
+        console.log("Video connected:", video);
       } catch (e) {
-        console.warn("Cross-origin nedeniyle video bağlanamadı:", video, e);
+        console.warn("Video could not be connected due to cross-origin:", video, e);
       }
     }
   });
 }
 
-// MutationObserver ile yeni videoları takip et
+// Track new videos with MutationObserver
 function observeNewVideos() {
   const observer = new MutationObserver(() => {
-    attachToVideos(); // Yeni eklenen videoları bağla
+    attachToVideos(); // Attach newly added videos
   });
 
   observer.observe(document.body, {
@@ -45,87 +44,21 @@ function observeNewVideos() {
   });
 }
 
-// Mesajları dinle ve ayarları uygula
+// Listen to messages and apply settings
 chrome.runtime.onMessage.addListener((message) => {
   setupAudioContext();
   attachToVideos();
 
   if (message.action === "setGain") {
     gainNode.gain.value = message.gain;
-    console.log(`Gain ayarlandı: ${message.gain}`);
+    console.log(`Gain set to: ${message.gain}`);
   } else if (message.action === "setPan") {
     panNode.pan.value = message.pan;
-    console.log(`Pan ayarlandı: ${message.pan}`);
+    console.log(`Pan set to: ${message.pan}`);
   }
 });
 
-// Başlangıç ayarları
+// Initial settings
 setupAudioContext();
 attachToVideos();
 observeNewVideos();
-=======
-let audioContext;
-let gainNode;
-let panNode;
-
-// AudioContext'i başlat
-function setupAudioContext() {
-  if (!audioContext) {
-    audioContext = new AudioContext();
-    gainNode = audioContext.createGain();
-    panNode = audioContext.createStereoPanner();
-
-    gainNode.connect(panNode).connect(audioContext.destination);
-  }
-}
-
-// Yeni video elementlerini bağla
-function attachToVideos() {
-  const mediaElements = document.querySelectorAll("video");
-  mediaElements.forEach((video) => {
-    if (!video.hasAttribute("data-audio-connected")) {
-      try {
-        // Cross-origin sorunlarını aşmak için
-        video.crossOrigin = "anonymous";
-        const source = audioContext.createMediaElementSource(video);
-        source.connect(gainNode);
-        video.setAttribute("data-audio-connected", "true");
-        console.log("Video bağlandı:", video);
-      } catch (e) {
-        console.warn("Cross-origin nedeniyle video bağlanamadı:", video, e);
-      }
-    }
-  });
-}
-
-// MutationObserver ile yeni videoları takip et
-function observeNewVideos() {
-  const observer = new MutationObserver(() => {
-    attachToVideos(); // Yeni eklenen videoları bağla
-  });
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-}
-
-// Mesajları dinle ve ayarları uygula
-chrome.runtime.onMessage.addListener((message) => {
-  setupAudioContext();
-  attachToVideos();
-
-  if (message.action === "setGain") {
-    gainNode.gain.value = message.gain;
-    console.log(`Gain ayarlandı: ${message.gain}`);
-  } else if (message.action === "setPan") {
-    panNode.pan.value = message.pan;
-    console.log(`Pan ayarlandı: ${message.pan}`);
-  }
-});
-
-// Başlangıç ayarları
-setupAudioContext();
-attachToVideos();
-observeNewVideos();
->>>>>>> sound-adjuster-1.1
