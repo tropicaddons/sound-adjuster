@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sound Adjuster</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Theme Toggle Button -->
+  <button id="theme-toggle" title="Toggle Theme">☀️</button>
+
+  <div id="elements-pane">
+    <header>
+      <h1>Sound Adjuster</h1>
+      <div class="subtitle">Advanced Audio Control</div>
+    </header>
+	<template id="elements-tpl">
+			<div class="header-row">
+				<div class="element-label"></div>
+				<button class="element-reset">Reset</button>
+			</div>
+			<label>
+				<span>Gain</span>
+				<input type="range" class="element-gain" min="0" max="5" step="0.05" value="1" />
+				<input type="number" class="element-gain-num" value="1" min="0" max="69" step="0.05">
+			</label>
+			<label>
+				<span>Pan</span>
+				<input type="range" class="element-pan" min="-1" max="1" step="0.05" value="0" />
+				<input type="number" class="element-pan-num" value="0" min="-1" max="1" step="0.05">
+			</label>
+
+			<!-- 5-Band Equalizer Section -->
+			<div class="equalizer-section collapsed">
+				<div class="equalizer-header">
+					<span class="equalizer-title">🎛️ Equalizer</span>
+					<div class="preset-buttons">
+						<button class="preset-btn" data-preset="flat" title="Flat">Flat</button>
+						<button class="preset-btn" data-preset="rock" title="Rock">Rock</button>
+						<button class="preset-btn" data-preset="pop" title="Pop">Pop</button>
+						<button class="preset-btn" data-preset="jazz" title="Jazz">Jazz</button>
+						<button class="preset-btn" data-preset="classical" title="Classical">Classical</button>
+						<button class="preset-btn" data-preset="bassBoost" title="Bass Boost">Bass+</button>
+						<button class="preset-btn" data-preset="vocal" title="Vocal">Vocal</button>
+						<button class="preset-btn" data-preset="dance" title="Dance">Dance</button>
+					</div>
+					<button class="equalizer-toggle" title="Toggle Equalizer"></button>
+				</div>
+				<div class="equalizer-controls">
+					<label class="eq-band">
+						<span class="band-label">Bass</span>
+						<span class="band-freq">60Hz</span>
+						<input type="range" class="element-eq-bass" min="-20" max="20" step="1" value="0" orient="vertical" />
+						<span class="band-value">0dB</span>
+					</label>
+					<label class="eq-band">
+						<span class="band-label">Low Mid</span>
+						<span class="band-freq">250Hz</span>
+						<input type="range" class="element-eq-lowmid" min="-20" max="20" step="1" value="0" orient="vertical" />
+						<span class="band-value">0dB</span>
+					</label>
+					<label class="eq-band">
+						<span class="band-label">Mid</span>
+						<span class="band-freq">1kHz</span>
+						<input type="range" class="element-eq-mid" min="-20" max="20" step="1" value="0" orient="vertical" />
+						<span class="band-value">0dB</span>
+					</label>
+					<label class="eq-band">
+						<span class="band-label">High Mid</span>
+						<span class="band-freq">4kHz</span>
+						<input type="range" class="element-eq-highmid" min="-20" max="20" step="1" value="0" orient="vertical" />
+						<span class="band-value">0dB</span>
+					</label>
+					<label class="eq-band">
+						<span class="band-label">Treble</span>
+						<span class="band-freq">8kHz</span>
+						<input type="range" class="element-eq-treble" min="-20" max="20" step="1" value="0" orient="vertical" />
+						<span class="band-value">0dB</span>
+					</label>
+				</div>
+			</div>
+			<div class="checkboxes">
+				<label>
+					<span>Mono</span>
+					<input type="checkbox" class="element-mono" />
+				</label>
+				<label>
+					<span>Flip L/R</span>
+					<input type="checkbox" class="element-flip" />
+				</label>
+			</div>
+	</template>
+	<div id="all-elements">
+		<!-- Media elements will be inserted here by JavaScript -->
+	</div>
+	<!-- Individual controls removed for cleaner UI -->
+  <p class="info">
+		🎵 <strong>Pro Tip:</strong> Use equalizer presets for instant audio optimization!<br>
+		⚠️ <strong>Note:</strong> Some sites block extensions due to security restrictions.
+	</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

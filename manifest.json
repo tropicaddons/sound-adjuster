@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Sound Adjuster",
+  "version": "2.0",
+  "description": "Control the volume (gain) and stereo balance (pan) of audio in tabs.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "webNavigation"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sound Adjuster",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    },
+    "theme_icons": [
+      {
+        "dark": "icon16.png",
+        "light": "icon16.png",
+        "size": 16
+      },
+      {
+        "dark": "icon48.png",
+        "light": "icon48.png",
+        "size": 48
+      },
+      {
+        "dark": "icon128.png",
+        "light": "icon128.png",
+        "size": 128
+      }
+    ]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sound-adjuster@example.com"
+    }
+  }
+}
