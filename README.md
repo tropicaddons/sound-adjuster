@@ -48,10 +48,9 @@
 ## Troubleshooting
 
 ### If Media Doesn't Work:
-1. Click "Yeniden Bağlan" button in the popup
-2. Refresh the page and try again
-3. Check browser console for error messages
-4. Try clicking on the video first (unlocks AudioContext)
+1. Refresh the page and try again
+2. Check browser console for error messages
+3. Try clicking on the video first (unlocks AudioContext)
 
 ### Common Issues:
 - **No Sound**: AudioContext may need user interaction to unlock
