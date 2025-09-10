@@ -5,7 +5,8 @@
 [![Download on Firefox](https://img.shields.io/badge/Firefox-Download-blue?style=for-the-badge&logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
 
 ---
-![resim](https://github.com/user-attachments/assets/9e5e6e30-8d77-40dd-bd5e-487ee4655e2d) ![resim](https://github.com/user-attachments/assets/f5d32b2e-ae3f-4caf-bd01-d78351e5cc06)
+<img width="382" height="591" alt="{10A73713-D891-4651-86BA-AB374E7C9FD6}" src="https://github.com/user-attachments/assets/08e90021-f9f9-4ced-945f-98b11a4821cb" /> <img width="382" height="591" alt="{6F573D8E-47CE-41BD-BF0C-67A64FC7CBD9}" src="https://github.com/user-attachments/assets/3c4308cd-2132-4890-b8cf-7013c29fc6e8" />
+
 
 
 ## Features
