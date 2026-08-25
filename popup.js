@@ -3,9 +3,14 @@
 // Modern UI Elements
 let tid = 0;
 const frameMap = new Map();
+let referenceMediaKey = null;
 const allElements = document.getElementById('all-elements');
 const elementsTpl = document.getElementById('elements-tpl');
 const themeToggle = document.getElementById('theme-toggle');
+let noMediaStateVisible = false;
+let autoMediaScanTimer = null;
+let autoMediaScanInFlight = false;
+const AUTO_MEDIA_SCAN_INTERVAL_MS = 700;
 
 // Equalizer Presets
 const equalizerPresets = {
@@ -28,8 +33,9 @@ function initializeTheme() {
 
 function updateThemeToggleIcon() {
 	const isLightTheme = document.body.classList.contains('light-theme');
-	themeToggle.textContent = isLightTheme ? '🌙' : '☀️';
+	themeToggle.textContent = isLightTheme ? '☾' : '☼';
 	themeToggle.title = isLightTheme ? 'Switch to Dark Mode' : 'Switch to Light Mode';
+	themeToggle.setAttribute('aria-label', themeToggle.title);
 }
 
 function toggleTheme() {
@@ -43,205 +49,59 @@ function toggleTheme() {
 initializeTheme();
 themeToggle.addEventListener('click', toggleTheme);
 
-// Demo mode for testing UI when no media is found
-function showDemoMode() {
-	console.log("🎭 Showing demo mode - no real media found");
-	const node = document.createElement('div');
-	node.appendChild(document.importNode(elementsTpl.content, true));
+function createEmptyState(titleText, descriptionText) {
+	const emptyState = document.createElement('div');
+	emptyState.className = 'empty-state';
 
-	// Style as demo
-	node.style.opacity = '0.7';
-	node.style.position = 'relative';
-	node.querySelector('.element-label').innerHTML = `
-		<span class="element-type">🎵 Demo Audio</span>
-		<span class="element-info">
-			<span class="frame-badge">Demo</span>
-			<span class="playing-indicator">▶️</span>
-		</span>
-	`;
+	const title = document.createElement('h2');
+	title.textContent = titleText;
 
-	const gain = node.querySelector('.element-gain');
-	const gainNumberInput = node.querySelector('.element-gain-num');
-	gain.value = 1;
-	gainNumberInput.value = '1';
-	gain.style.display = 'inline-block';
-	gain.style.width = '100%';
-	gain.addEventListener('input', function () {
-		console.log(`🎚️ Demo gain changed to: ${this.value}`);
-		this.parentElement.querySelector('.element-gain-num').value = '' + this.value;
-	});
-	gainNumberInput.addEventListener('input', function () {
-		if (+this.value > +this.getAttribute('max')) this.value = this.getAttribute('max');
-		if (+this.value < +this.getAttribute('min')) this.value = this.getAttribute('min');
-		this.parentElement.querySelector('.element-gain').value = '' + this.value;
-		console.log(`🔢 Demo gain input changed to: ${this.value}`);
-	});
+	const description = document.createElement('p');
+	description.textContent = descriptionText;
 
-	const pan = node.querySelector('.element-pan');
-	const panNumberInput = node.querySelector('.element-pan-num');
-	pan.value = 0;
-	panNumberInput.value = '0';
-	pan.style.display = 'inline-block';
-	pan.style.width = '100%';
-	pan.addEventListener('input', function () {
-		console.log(`🎚️ Demo pan changed to: ${this.value}`);
-		this.parentElement.querySelector('.element-pan-num').value = '' + this.value;
-	});
-	panNumberInput.addEventListener('input', function () {
-		if (+this.value > +this.getAttribute('max')) this.value = this.getAttribute('max');
-		if (+this.value < +this.getAttribute('min')) this.value = this.getAttribute('min');
-		this.parentElement.querySelector('.element-pan').value = '' + this.value;
-		console.log(`🔢 Demo pan input changed to: ${this.value}`);
-	});
+	const reloadButton = document.createElement('button');
+	reloadButton.type = 'button';
+	reloadButton.className = 'reload-button';
+	reloadButton.textContent = '↻';
+	reloadButton.title = 'Scan again';
+	reloadButton.setAttribute('aria-label', 'Scan again');
+	reloadButton.addEventListener('click', () => scanForNewMedia());
 
-	const mono = node.querySelector('.element-mono');
-	mono.addEventListener('change', _ => {
-		console.log(`🎵 Demo mono changed to: ${mono.checked}`);
-	});
+	emptyState.appendChild(title);
+	emptyState.appendChild(description);
+	emptyState.appendChild(reloadButton);
+	return emptyState;
 
-	const flip = node.querySelector('.element-flip');
-	flip.addEventListener('change', _ => {
-		console.log(`🔄 Demo flip changed to: ${flip.checked}`);
-	});
+}
 
-	// Demo equalizer controls
-	const eqBass = node.querySelector('.element-eq-bass');
-	const eqLowMid = node.querySelector('.element-eq-lowmid');
-	const eqMid = node.querySelector('.element-eq-mid');
-	const eqHighMid = node.querySelector('.element-eq-highmid');
-	const eqTreble = node.querySelector('.element-eq-treble');
+function showNoMediaState() {
+	noMediaStateVisible = true;
+	allElements.innerHTML = '';
+	allElements.classList.add('is-empty');
+	allElements.appendChild(createEmptyState(
+		'No media available',
+		'Start playing audio or video. It will appear here automatically.'
+	));
+	scheduleAutoMediaScan();
+}
 
-	if (eqBass) {
-		eqBass.value = 0;
-		eqBass.addEventListener('input', function () {
-			console.log(`🎛️ Demo bass changed to: ${this.value}dB`);
-			const valueDisplay = this.parentElement.querySelector('.band-value');
-			if (valueDisplay) {
-				valueDisplay.textContent = this.value > 0 ? `+${this.value}dB` : `${this.value}dB`;
-			}
-		});
-	}
-
-	if (eqLowMid) {
-		eqLowMid.value = 0;
-		eqLowMid.addEventListener('input', function () {
-			console.log(`🎛️ Demo low mid changed to: ${this.value}dB`);
-			const valueDisplay = this.parentElement.querySelector('.band-value');
-			if (valueDisplay) {
-				valueDisplay.textContent = this.value > 0 ? `+${this.value}dB` : `${this.value}dB`;
-			}
-		});
-	}
-
-	if (eqMid) {
-		eqMid.value = 0;
-		eqMid.addEventListener('input', function () {
-			console.log(`🎛️ Demo mid changed to: ${this.value}dB`);
-			const valueDisplay = this.parentElement.querySelector('.band-value');
-			if (valueDisplay) {
-				valueDisplay.textContent = this.value > 0 ? `+${this.value}dB` : `${this.value}dB`;
-			}
-		});
-	}
-
-	if (eqHighMid) {
-		eqHighMid.value = 0;
-		eqHighMid.addEventListener('input', function () {
-			console.log(`🎛️ Demo high mid changed to: ${this.value}dB`);
-			const valueDisplay = this.parentElement.querySelector('.band-value');
-			if (valueDisplay) {
-				valueDisplay.textContent = this.value > 0 ? `+${this.value}dB` : `${this.value}dB`;
-			}
-		});
-	}
-
-	if (eqTreble) {
-		eqTreble.value = 0;
-		eqTreble.addEventListener('input', function () {
-			console.log(`🎛️ Demo treble changed to: ${this.value}dB`);
-			const valueDisplay = this.parentElement.querySelector('.band-value');
-			if (valueDisplay) {
-				valueDisplay.textContent = this.value > 0 ? `+${this.value}dB` : `${this.value}dB`;
-			}
-		});
-	}
-
-	node.querySelector('.element-reset').onclick = function () {
-		gain.value = 1;
-		gainNumberInput.value = '1';
-		pan.value = 0;
-		panNumberInput.value = '0';
-		mono.checked = false;
-		flip.checked = false;
-
-		// Reset equalizer
-		if (eqBass) eqBass.value = 0;
-		if (eqLowMid) eqLowMid.value = 0;
-		if (eqMid) eqMid.value = 0;
-		if (eqHighMid) eqHighMid.value = 0;
-		if (eqTreble) eqTreble.value = 0;
-
-	// Update all value displays
-	node.querySelectorAll('.band-value').forEach(display => {
-		display.textContent = '0dB';
-	});
-
-	// Reset preset buttons in demo
-	const demoPresetButtons = node.querySelectorAll('.preset-btn');
-	demoPresetButtons.forEach(btn => btn.classList.remove('active'));
-
-	console.log("🔄 Demo reset clicked");
+function showUnavailableMediaState(capability) {
+	const descriptions = {
+		'site-restricted': 'This site restricts direct audio processing. Playback is left unchanged.',
+		'cross-origin-media': 'This media is protected by cross-origin security. Playback is left unchanged.',
+		'protected-media': 'Protected media cannot be processed safely. Playback is left unchanged.',
+		'audio-graph-failed': 'Firefox could not create a safe audio connection for this media.',
+		'web-audio-unavailable': 'Advanced audio processing is not available for this media.'
 	};
 
-	// Demo equalizer toggle
-	const demoEqToggle = node.querySelector('.equalizer-toggle');
-	const demoEqSection = node.querySelector('.equalizer-section');
-
-	if (demoEqToggle && demoEqSection) {
-		demoEqToggle.addEventListener('click', function () {
-			const isCollapsed = demoEqSection.classList.toggle('collapsed');
-			// Update toggle button title only (icon handled by CSS)
-			if (isCollapsed) {
-				this.title = 'Open Equalizer';
-			} else {
-				this.title = 'Close Equalizer';
-			}
-			console.log(`🎛️ Demo equalizer ${isCollapsed ? 'collapsed' : 'expanded'}`);
-		});
-	}
-
-	// Demo preset buttons
-	const demoPresetButtons = node.querySelectorAll('.preset-btn');
-	demoPresetButtons.forEach(button => {
-		button.addEventListener('click', function () {
-			const presetName = this.getAttribute('data-preset');
-			const preset = equalizerPresets[presetName];
-
-			if (!preset) return;
-
-			console.log(`🎛️ Demo preset: ${presetName}`, preset);
-
-			// Update demo slider values
-			if (eqBass) eqBass.value = preset.bass;
-			if (eqLowMid) eqLowMid.value = preset.lowMid;
-			if (eqMid) eqMid.value = preset.mid;
-			if (eqHighMid) eqHighMid.value = preset.highMid;
-			if (eqTreble) eqTreble.value = preset.treble;
-
-			// Update demo value displays
-			node.querySelectorAll('.band-value').forEach((display, index) => {
-				const values = [preset.bass, preset.lowMid, preset.mid, preset.highMid, preset.treble];
-				const value = values[index];
-				display.textContent = value > 0 ? `+${value}dB` : `${value}dB`;
-			});
-
-			// Update active preset button
-			demoPresetButtons.forEach(btn => btn.classList.remove('active'));
-			this.classList.add('active');
-  });
-});
-
-	allElements.appendChild(node);
+	noMediaStateVisible = false;
+	stopAutoMediaScan();
+	allElements.innerHTML = '';
+	allElements.classList.add('is-empty');
+	allElements.appendChild(createEmptyState(
+		'Audio boost unavailable',
+		descriptions[capability?.reason] || 'This media cannot be processed safely. Playback is left unchanged.'
+	));
 }
 
 function applySettings(fid, elid, newSettings) {
@@ -251,7 +111,10 @@ function applySettings(fid, elid, newSettings) {
 		elid: elid,
 		settings: newSettings
 	}, { frameId: fid }).then(result => {
-		console.log(`✅ Settings applied successfully to element ${elid}`);
+		const capability = result?.capability;
+		if (`${fid}:${elid}` === referenceMediaKey && capability && capability.mode !== 'full' && capability.mode !== 'pending') {
+			showUnavailableMediaState(capability);
+		}
 		return result;
 	}).catch(err => {
 		console.error(`❌ Failed to apply settings to element ${elid}:`, err);
@@ -279,10 +142,45 @@ function scanMedia() {
 	});
 }
 
-browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
-	tid = tabs[0].id;
-	console.log(`🎯 Active tab ID: ${tid}, URL: ${tabs[0].url}`);
-	return scanMedia().then(frameResults => {
+function countScannedMedia(frameResults) {
+	return frameResults.reduce((count, frameResult) => (
+		count + Object.keys(frameResult.media || {}).length
+	), 0);
+}
+
+function stopAutoMediaScan() {
+	clearTimeout(autoMediaScanTimer);
+	autoMediaScanTimer = null;
+}
+
+function scheduleAutoMediaScan(delay = AUTO_MEDIA_SCAN_INTERVAL_MS) {
+	if (!noMediaStateVisible || autoMediaScanTimer !== null) return;
+	autoMediaScanTimer = setTimeout(() => {
+		autoMediaScanTimer = null;
+		scanForNewMedia();
+	}, delay);
+}
+
+async function scanForNewMedia() {
+	if (!noMediaStateVisible || autoMediaScanInFlight) return;
+	autoMediaScanInFlight = true;
+
+	try {
+		const frameResults = await scanMedia();
+		if (noMediaStateVisible && countScannedMedia(frameResults) > 0) {
+			noMediaStateVisible = false;
+			stopAutoMediaScan();
+			renderFrameResults(frameResults);
+		}
+	} catch (error) {
+		console.warn('Automatic media scan failed:', error);
+	} finally {
+		autoMediaScanInFlight = false;
+		if (noMediaStateVisible) scheduleAutoMediaScan();
+	}
+}
+
+function renderFrameResults(frameResults) {
 		console.log("📊 Frame scan results:", frameResults);
 		let elCount = 0;
 
@@ -298,18 +196,43 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 		}
 
 		if (elCount == 0) {
-			console.log("⚠️ No media elements found - showing demo mode");
-			showDemoMode();
+			console.log("No media elements found - showing empty state");
+			showNoMediaState();
 		} else {
+			noMediaStateVisible = false;
+			stopAutoMediaScan();
 			console.log(`🎉 Found ${elCount} media elements total`);
+			const scannedMedia = [];
+			for (const [fid, mediaMap] of frameMap) {
+				for (const [elid, media] of mediaMap) {
+					scannedMedia.push({ fid, elid, media });
+				}
+			}
+
+			const referenceEntry = scannedMedia.find(entry => entry.media.isPlaying) || scannedMedia[0];
+			const referenceMedia = referenceEntry.media;
+			referenceMediaKey = `${referenceEntry.fid}:${referenceEntry.elid}`;
+
+			if (referenceMedia.capability?.mode === 'basic' || referenceMedia.capability?.mode === 'unsupported') {
+				showUnavailableMediaState(referenceMedia.capability);
+				return;
+			}
+
 			const node = document.createElement('div');
 			node.appendChild(document.importNode(elementsTpl.content, true));
 			node.querySelector('.element-label').textContent = `All media (${elCount} elements)`;
 
+			// The popup is destroyed whenever it is closed. Restore the volume from
+			// the content script, where the active AudioContext keeps its current gain.
+			const restoredGain = Number.parseFloat(referenceMedia?.settings?.gain);
+			const initialGain = Number.isFinite(restoredGain)
+				? Math.max(0, Math.min(5, restoredGain))
+				: 1;
+
 			const gain = node.querySelector('.element-gain');
 			const gainNumberInput = node.querySelector('.element-gain-num');
-			gain.value = 1;
-			gainNumberInput.value = '1';
+			gain.value = initialGain;
+			gainNumberInput.value = '' + initialGain;
 			gain.style.display = 'inline-block';
 			gain.style.width = '100%';
 			function applyGain (value) {
@@ -326,7 +249,7 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 				gain.value = value;
 				gainNumberInput.value = '' + value;
 			}
-			gain.addEventListener('input', _ => applyGain(gain.value));
+			gain.addEventListener('input', _ => applyGain(+gain.value));
 			gainNumberInput.addEventListener('input', function () {
 				if (+this.value > +this.getAttribute('max'))
 					this.value = this.getAttribute('max');
@@ -546,18 +469,33 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 			};
 			allElements.appendChild(node);
 		}
+	}
+
+browser.runtime.onMessage.addListener((message, sender) => {
+	if (message?.action !== 'mediaElementsChanged' || !noMediaStateVisible) return undefined;
+	if (sender.tab?.id !== tid) return undefined;
+
+	stopAutoMediaScan();
+	scheduleAutoMediaScan(0);
+	return undefined;
+});
+
+window.addEventListener('unload', stopAutoMediaScan);
+
+browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
+	tid = tabs[0].id;
+	console.log(`🎯 Active tab ID: ${tid}, URL: ${tabs[0].url}`);
+	return scanMedia().then(frameResults => {
+		renderFrameResults(frameResults);
 	}).catch(err => {
 		console.error('❌ Error scanning media:', err);
-		allElements.innerHTML = `
-			<div style="text-align: center; padding: 20px;">
-				<h3 style="color: var(--warning-color); margin-bottom: 10px;">⚠️ Scan Error</h3>
-				<p style="margin: 0; font-size: 0.9em; opacity: 0.8;">
-					Unable to scan media elements on this page.
-				</p>
-				<p style="margin: 10px 0 0 0; font-size: 0.8em; opacity: 0.6;">
-					Error: ${err.message}
-				</p>
-			</div>
-		`;
+		noMediaStateVisible = false;
+		stopAutoMediaScan();
+		allElements.innerHTML = '';
+		allElements.classList.add('is-empty');
+		allElements.appendChild(createEmptyState(
+			'Unable to scan this page',
+			'The page may not allow extension access. Try again after reloading it.'
+		));
 	});
 });
