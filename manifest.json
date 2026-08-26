@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sound Adjuster",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Control the volume (gain) and stereo balance (pan) of audio in tabs.",
   "permissions": [
     "activeTab",
