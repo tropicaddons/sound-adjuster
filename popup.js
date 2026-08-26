@@ -24,6 +24,14 @@ const equalizerPresets = {
 	dance: { bass: 5, lowMid: 2, mid: 1, highMid: 4, treble: 4 }
 };
 
+const {
+	DEFAULT_SETTINGS: POPUP_DEFAULT_SETTINGS,
+	applySettingsToControls,
+	restoreEqualizerExpanded,
+	setEqualizerExpanded,
+	updatePresetButtons
+} = globalThis.SoundAdjusterPopupState;
+
 // Theme Management
 function initializeTheme() {
 	const savedTheme = localStorage.getItem('soundAdjusterTheme') || 'dark';
@@ -222,17 +230,16 @@ function renderFrameResults(frameResults) {
 			node.appendChild(document.importNode(elementsTpl.content, true));
 			node.querySelector('.element-label').textContent = `All media (${elCount} elements)`;
 
-			// The popup is destroyed whenever it is closed. Restore the volume from
-			// the content script, where the active AudioContext keeps its current gain.
-			const restoredGain = Number.parseFloat(referenceMedia?.settings?.gain);
-			const initialGain = Number.isFinite(restoredGain)
-				? Math.max(0, Math.min(5, restoredGain))
-				: 1;
+			// The popup is destroyed whenever it is closed. Restore every control
+			// from the content script, where the active media settings remain alive.
+			const restoredUiState = applySettingsToControls(
+				node,
+				referenceMedia?.settings,
+				equalizerPresets
+			);
 
 			const gain = node.querySelector('.element-gain');
 			const gainNumberInput = node.querySelector('.element-gain-num');
-			gain.value = initialGain;
-			gainNumberInput.value = '' + initialGain;
 			gain.style.display = 'inline-block';
 			gain.style.width = '100%';
 			function applyGain (value) {
@@ -260,8 +267,6 @@ function renderFrameResults(frameResults) {
 
 			const pan = node.querySelector('.element-pan');
 			const panNumberInput = node.querySelector('.element-pan-num');
-			pan.value = 0;
-			panNumberInput.value = '0';
 			pan.style.display = 'inline-block';
 			pan.style.width = '100%';
 			function applyPan (value) {
@@ -288,7 +293,6 @@ function renderFrameResults(frameResults) {
 			});
 
 			const mono = node.querySelector('.element-mono');
-			mono.checked = false;
 			mono.addEventListener('change', _ => {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
@@ -300,7 +304,6 @@ function renderFrameResults(frameResults) {
 			});
 
 			const flip = node.querySelector('.element-flip');
-			flip.checked = false;
 			flip.addEventListener('change', _ => {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
@@ -318,11 +321,15 @@ function renderFrameResults(frameResults) {
 			const eqHighMid = node.querySelector('.element-eq-highmid');
 			const eqTreble = node.querySelector('.element-eq-treble');
 
-			if (eqBass) eqBass.value = 0;
-			if (eqLowMid) eqLowMid.value = 0;
-			if (eqMid) eqMid.value = 0;
-			if (eqHighMid) eqHighMid.value = 0;
-			if (eqTreble) eqTreble.value = 0;
+			function currentEqualizerSettings() {
+				return {
+					eqBass: Number.parseFloat(eqBass?.value),
+					eqLowMid: Number.parseFloat(eqLowMid?.value),
+					eqMid: Number.parseFloat(eqMid?.value),
+					eqHighMid: Number.parseFloat(eqHighMid?.value),
+					eqTreble: Number.parseFloat(eqTreble?.value)
+				};
+			}
 
 			// Add global equalizer event listeners
 			const setupGlobalEqControl = (element, band) => {
@@ -347,6 +354,12 @@ function renderFrameResults(frameResults) {
 					if (valueDisplay) {
 						valueDisplay.textContent = value > 0 ? `+${value}dB` : `${value}dB`;
 					}
+
+					activePreset = updatePresetButtons(
+						node,
+						currentEqualizerSettings(),
+						equalizerPresets
+					);
 				});
 			};
 
@@ -361,21 +374,20 @@ function renderFrameResults(frameResults) {
 			const eqSection = node.querySelector('.equalizer-section');
 
 			if (eqToggle && eqSection) {
+				restoreEqualizerExpanded(node, localStorage);
 				eqToggle.addEventListener('click', function () {
-					const isCollapsed = eqSection.classList.toggle('collapsed');
-					// Update toggle button title only (icon handled by CSS)
-					if (isCollapsed) {
-						this.title = 'Open Equalizer';
-					} else {
-						this.title = 'Close Equalizer';
-					}
-					console.log(`🎛️ Equalizer ${isCollapsed ? 'collapsed' : 'expanded'}`);
+					const expanded = setEqualizerExpanded(
+						node,
+						eqSection.classList.contains('collapsed'),
+						localStorage
+					);
+					console.log(`🎛️ Equalizer ${expanded ? 'expanded' : 'collapsed'}`);
 				});
 			}
 
 			// Equalizer preset functionality
 			const presetButtons = node.querySelectorAll('.preset-btn');
-			let activePreset = null;
+			let activePreset = restoredUiState.presetName;
 
 			presetButtons.forEach(button => {
 				button.addEventListener('click', function () {
@@ -421,28 +433,12 @@ function renderFrameResults(frameResults) {
 });
 
 			node.querySelector('.element-reset').onclick = function () {
-				gain.value = 1;
-				gain.parentElement.querySelector('.element-gain-num').value = '' + gain.value;
-				pan.value = 0;
-				pan.parentElement.querySelector('.element-pan-num').value = '' + pan.value;
-				mono.checked = false;
-				flip.checked = false;
-
-				// Reset equalizer
-				if (eqBass) eqBass.value = 0;
-				if (eqLowMid) eqLowMid.value = 0;
-				if (eqMid) eqMid.value = 0;
-				if (eqHighMid) eqHighMid.value = 0;
-				if (eqTreble) eqTreble.value = 0;
-
-				// Update all value displays
-				node.querySelectorAll('.band-value').forEach(display => {
-					display.textContent = '0dB';
-				});
-
-				// Reset active preset
-				presetButtons.forEach(btn => btn.classList.remove('active'));
-				activePreset = null;
+				const resetUiState = applySettingsToControls(
+					node,
+					POPUP_DEFAULT_SETTINGS,
+					equalizerPresets
+				);
+				activePreset = resetUiState.presetName;
 
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
