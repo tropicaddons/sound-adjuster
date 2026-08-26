@@ -4,8 +4,11 @@ Sound Adjuster is a Firefox extension for changing the volume, stereo balance, a
 
 [![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-blue?logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
 
-![Dark theme](https://github.com/user-attachments/assets/9e5e6e30-8d77-40dd-bd5e-487ee4655e2d)
-![Light theme](https://github.com/user-attachments/assets/f5d32b2e-ae3f-4caf-bd01-d78351e5cc06)
+## Screenshots
+
+| Dark theme | Light theme |
+| --- | --- |
+| ![Sound Adjuster dark theme](docs/screenshots/dark-theme.png) | ![Sound Adjuster light theme](docs/screenshots/light-theme.png) |
 
 ## Features
 
