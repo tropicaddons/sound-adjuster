@@ -3,6 +3,7 @@
 Sound Adjuster is a Firefox extension for changing the volume, stereo balance, and equalizer settings of audio and video on the current page.
 
 [![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-blue?logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/tropicaddons)
 
 ## Screenshots
 
@@ -31,6 +32,10 @@ Temporary add-ons are removed when Firefox closes.
 ## Compatibility
 
 The extension works with standard HTML audio and video elements. Some sites use cross-origin media or DRM that Firefox does not allow extensions to process safely. In those cases, Sound Adjuster leaves the original playback unchanged and displays an availability message.
+
+## Support
+
+Sound Adjuster is free and open source. If you find it useful, you can [support its continued development](https://buymeacoffee.com/tropicaddons).
 
 ## License
 
