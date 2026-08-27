@@ -17,8 +17,28 @@ Sound Adjuster is a Firefox extension for changing the volume, stereo balance, a
 - Left and right stereo balance
 - Five-band equalizer with presets
 - Mono and channel-flip controls
+- Optional per-site profiles that restore settings after page reloads
 - Light and dark themes
 - Automatic detection of media added after the page loads
+- Reliable audio recovery when an autoplay feed video is unmuted
+
+## Site profiles
+
+Turn on **Remember site** at the bottom of the controls to store the current gain, pan, mono, channel-flip, and equalizer settings for the active site. The switch itself reflects whether the profile is active; extra text appears only if storage fails. The profile is applied before the first media scan after a page reload, including media added later.
+
+Profiles are opt-in, stay on the local machine, and are never synchronized or used for tracking. Private windows and non-HTTP(S) pages do not read or write profiles. Turning the switch off removes the saved profile without changing the sound in the current tab.
+
+## Changelog
+
+### 2.4.0
+
+Changes since 2.3.2:
+
+- Added opt-in per-site profiles for gain, pan, mono, channel flip, and all equalizer bands.
+- Restored remembered settings before the first media scan and applied them to media added later on dynamic feed pages.
+- Improved autoplay-feed reliability by resuming suspended audio processing when media is unmuted or begins playing.
+- Refined the popup with a compact profile switch, a familiar Reset action in the **All media** header, and immediate Equalizer collapse without leftover popup space.
+- Added Firefox Manifest V3 background storage handling while keeping private windows and non-HTTP(S) pages outside profile storage.
 
 ## Install from source
 

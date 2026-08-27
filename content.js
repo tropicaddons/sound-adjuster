@@ -11,11 +11,11 @@ const DEFAULT_SETTINGS = Object.freeze({
   eqHighMid: 0,
   eqTreble: 0
 });
-
 const BASIC_MODE_HOSTS = ['tiktok.com'];
 const registeredMediaElements = new WeakSet();
 let frameSettings = { ...DEFAULT_SETTINGS };
 let hasUserSettings = false;
+let initializationPromise = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -224,6 +224,21 @@ function setChannelMode(el, settings) {
   }
 }
 
+function resumeAudioContext(el) {
+  const context = el?.xSoundFixerContext;
+  if (!context || context.state !== 'suspended') return false;
+
+  try {
+    const resumeResult = context.resume();
+    if (resumeResult && typeof resumeResult.catch === 'function') {
+      resumeResult.catch(() => {});
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 function applyFullSettings(el, elid, updates) {
   const graphResult = initializeAudioGraph(el, elid);
   if (!graphResult.success) {
@@ -232,9 +247,7 @@ function applyFullSettings(el, elid, updates) {
 
   const settings = mergeSettings(el.xSoundFixerSettings, updates);
 
-  if (el.xSoundFixerContext.state === 'suspended') {
-    el.xSoundFixerContext.resume().catch(() => {});
-  }
+  resumeAudioContext(el);
 
   el.xSoundFixerGain.gain.value = settings.gain;
   el.xSoundFixerPan.pan.value = settings.pan;
@@ -324,7 +337,12 @@ function registerMediaElement(el) {
 
   el.addEventListener('loadstart', () => scheduleSettingsRestore(el));
   el.addEventListener('loadedmetadata', () => scheduleSettingsRestore(el));
-  el.addEventListener('play', () => scheduleSettingsRestore(el));
+  el.addEventListener('play', () => {
+    resumeAudioContext(el);
+    scheduleSettingsRestore(el);
+  });
+  el.addEventListener('playing', () => resumeAudioContext(el));
+  el.addEventListener('volumechange', () => resumeAudioContext(el));
 
   if (hasUserSettings) {
     applySettingsToElement(el, frameSettings);
@@ -357,40 +375,52 @@ function scanMediaElements() {
   return result;
 }
 
-function handleMessage(message, sender, sendResponse) {
+async function loadRememberedSiteProfile() {
   try {
+    const result = await browser.runtime.sendMessage({ action: 'getSiteProfile' });
+    if (result?.remembered && result.profile?.settings) {
+      frameSettings = mergeSettings(DEFAULT_SETTINGS, result.profile.settings);
+      hasUserSettings = true;
+    }
+  } catch (error) {
+    console.warn('Unable to load the remembered site profile:', error);
+  }
+}
+
+async function handleMessage(message) {
+  try {
+    if (initializationPromise) await initializationPromise;
+
     switch (message.action) {
       case 'scanMedia': {
         const mediaMap = scanMediaElements();
-        sendResponse({ success: true, media: Object.fromEntries(mediaMap) });
-        break;
+        return {
+          success: true,
+          media: Object.fromEntries(mediaMap)
+        };
       }
 
       case 'applySettings':
-        sendResponse(applySettings(message.elid, message.settings));
-        break;
+        return applySettings(message.elid, message.settings);
 
       case 'getStatus': {
         const mediaMap = scanMediaElements();
-        sendResponse({
+        return {
           success: true,
           status: {
             connectedMediaCount: mediaMap.size,
             media: Object.fromEntries(mediaMap)
           }
-        });
-        break;
+        };
       }
 
       default:
-        sendResponse({ success: false, error: `Unknown action: ${message.action}` });
+        return { success: false, error: `Unknown action: ${message.action}` };
     }
   } catch (error) {
     console.error('Error handling Sound Adjuster message:', error);
-    sendResponse({ success: false, error: error.message });
+    return { success: false, error: error.message };
   }
-
-  return true;
 }
 
 function registerMediaFromNode(node) {
@@ -424,7 +454,8 @@ function registerMediaFromNode(node) {
   }
 }
 
-function initialize() {
+async function initialize() {
+  await loadRememberedSiteProfile();
   scanMediaElements();
 
   const observer = new MutationObserver(mutations => {
@@ -458,7 +489,11 @@ function initialize() {
 browser.runtime.onMessage.addListener(handleMessage);
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initialize);
+  initializationPromise = new Promise(resolve => {
+    document.addEventListener('DOMContentLoaded', () => {
+      initialize().finally(resolve);
+    }, { once: true });
+  });
 } else {
-  initialize();
+  initializationPromise = initialize();
 }

@@ -15,8 +15,8 @@
     </header>
 	<template id="elements-tpl">
 			<div class="header-row">
-				<div class="element-label"></div>
-				<button class="element-reset">Reset</button>
+				<span class="element-label">All media</span>
+				<button type="button" class="element-reset">Reset</button>
 			</div>
 			<label>
 				<span>Gain</span>
@@ -86,6 +86,15 @@
 					<span>Flip L/R</span>
 					<input type="checkbox" class="element-flip" />
 				</label>
+			</div>
+			<div class="footer-actions">
+				<div class="site-profile-row" hidden>
+					<label class="site-profile-toggle">
+						<span class="site-profile-label">Remember site</span>
+						<input type="checkbox" class="remember-site" aria-label="Remember settings for this site" />
+					</label>
+					<span class="site-profile-status" aria-live="polite"></span>
+				</div>
 			</div>
 	</template>
 	<div id="all-elements"></div>

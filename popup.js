@@ -2,6 +2,8 @@
 
 // Modern UI Elements
 let tid = 0;
+let activeTab = null;
+let siteProfileStatus = { eligible: false, remembered: false, profile: null };
 const frameMap = new Map();
 let referenceMediaKey = null;
 const allElements = document.getElementById('all-elements');
@@ -27,10 +29,29 @@ const equalizerPresets = {
 const {
 	DEFAULT_SETTINGS: POPUP_DEFAULT_SETTINGS,
 	applySettingsToControls,
+	readSettingsFromControls,
 	restoreEqualizerExpanded,
 	setEqualizerExpanded,
 	updatePresetButtons
 } = globalThis.SoundAdjusterPopupState;
+
+function sendProfileMessage(action, settings) {
+	return browser.runtime.sendMessage({
+		action,
+		tabUrl: activeTab?.url,
+		incognito: activeTab?.incognito === true,
+		settings
+	});
+}
+
+async function loadSiteProfileStatus() {
+	try {
+		return await sendProfileMessage('getSiteProfile');
+	} catch (error) {
+		console.warn('Unable to read the site profile:', error);
+		return { eligible: false, remembered: false, profile: null };
+	}
+}
 
 // Theme Management
 function initializeTheme() {
@@ -228,7 +249,6 @@ function renderFrameResults(frameResults) {
 
 			const node = document.createElement('div');
 			node.appendChild(document.importNode(elementsTpl.content, true));
-			node.querySelector('.element-label').textContent = `All media (${elCount} elements)`;
 
 			// The popup is destroyed whenever it is closed. Restore every control
 			// from the content script, where the active media settings remain alive.
@@ -237,6 +257,81 @@ function renderFrameResults(frameResults) {
 				referenceMedia?.settings,
 				equalizerPresets
 			);
+
+			const rememberRow = node.querySelector('.site-profile-row');
+			const rememberSite = node.querySelector('.remember-site');
+			const profileStatusText = node.querySelector('.site-profile-status');
+			let profileOperationQueue = Promise.resolve();
+			let profileFeedbackSequence = 0;
+
+			function setProfileFeedback(text, state = 'idle') {
+				if (!profileStatusText) return;
+				profileStatusText.textContent = text;
+				profileStatusText.dataset.state = state;
+			}
+
+			function showCurrentProfileStatus(status = siteProfileStatus) {
+				setProfileFeedback('');
+			}
+
+			function queueProfileOperation(operation) {
+				profileOperationQueue = profileOperationQueue
+					.catch(() => undefined)
+					.then(operation);
+				return profileOperationQueue;
+			}
+
+			async function persistCurrentProfile() {
+				if (!rememberSite?.checked) return;
+				const feedbackId = ++profileFeedbackSequence;
+				try {
+					const settings = readSettingsFromControls(node);
+					siteProfileStatus = await queueProfileOperation(() => (
+						sendProfileMessage('saveSiteProfile', settings)
+					));
+					if (feedbackId === profileFeedbackSequence) showCurrentProfileStatus();
+					rememberRow.title = '';
+				} catch (error) {
+					console.warn('Unable to save the site profile:', error);
+					if (feedbackId === profileFeedbackSequence) {
+						setProfileFeedback('Couldn’t save settings', 'error');
+					}
+					rememberRow.title = 'Unable to save this site profile';
+				}
+			}
+
+			if (rememberRow && rememberSite && siteProfileStatus?.eligible) {
+				rememberRow.hidden = false;
+				rememberSite.checked = siteProfileStatus.remembered === true;
+				showCurrentProfileStatus();
+				rememberSite.addEventListener('change', async () => {
+					const shouldRemember = rememberSite.checked;
+					const feedbackId = ++profileFeedbackSequence;
+					rememberSite.disabled = true;
+					setProfileFeedback('');
+					try {
+						siteProfileStatus = await queueProfileOperation(() => (
+							shouldRemember
+								? sendProfileMessage('saveSiteProfile', readSettingsFromControls(node))
+								: sendProfileMessage('removeSiteProfile')
+						));
+						rememberSite.checked = siteProfileStatus.remembered === true;
+						if (feedbackId === profileFeedbackSequence) {
+							showCurrentProfileStatus();
+						}
+						rememberRow.title = '';
+					} catch (error) {
+						console.warn('Unable to update the site profile:', error);
+						rememberSite.checked = !shouldRemember;
+						if (feedbackId === profileFeedbackSequence) {
+							setProfileFeedback('Couldn’t update profile', 'error');
+						}
+						rememberRow.title = 'Unable to update this site profile';
+					} finally {
+						rememberSite.disabled = false;
+					}
+				});
+			}
 
 			const gain = node.querySelector('.element-gain');
 			const gainNumberInput = node.querySelector('.element-gain-num');
@@ -429,6 +524,7 @@ function renderFrameResults(frameResults) {
 					presetButtons.forEach(btn => btn.classList.remove('active'));
 					this.classList.add('active');
 					activePreset = presetName;
+					persistCurrentProfile();
   });
 });
 
@@ -462,7 +558,16 @@ function renderFrameResults(frameResults) {
 						});
 					}
 				}
+				persistCurrentProfile();
 			};
+
+			node.querySelectorAll([
+				'.element-gain', '.element-gain-num', '.element-pan', '.element-pan-num',
+				'.element-mono', '.element-flip', '.element-eq-bass', '.element-eq-lowmid',
+				'.element-eq-mid', '.element-eq-highmid', '.element-eq-treble'
+			].join(',')).forEach(control => {
+				control.addEventListener('change', () => persistCurrentProfile());
+			});
 			allElements.appendChild(node);
 		}
 	}
@@ -479,9 +584,11 @@ browser.runtime.onMessage.addListener((message, sender) => {
 window.addEventListener('unload', stopAutoMediaScan);
 
 browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
-	tid = tabs[0].id;
-	console.log(`🎯 Active tab ID: ${tid}, URL: ${tabs[0].url}`);
-	return scanMedia().then(frameResults => {
+	activeTab = tabs[0];
+	tid = activeTab.id;
+	console.log(`🎯 Active tab ID: ${tid}, URL: ${activeTab.url}`);
+	return Promise.all([scanMedia(), loadSiteProfileStatus()]).then(([frameResults, profileStatus]) => {
+		siteProfileStatus = profileStatus;
 		renderFrameResults(frameResults);
 	}).catch(err => {
 		console.error('❌ Error scanning media:', err);

@@ -10,6 +10,7 @@
 	--accent: #ff6b35;
 	--accent-soft: rgba(255, 107, 53, 0.14);
 	--focus: rgba(255, 107, 53, 0.28);
+	--danger: #ff7b72;
 }
 
 .light-theme {
@@ -24,6 +25,7 @@
 	--accent: #3b82f6;
 	--accent-soft: rgba(59, 130, 246, 0.12);
 	--focus: rgba(59, 130, 246, 0.24);
+	--danger: #c93737;
 }
 
 * {
@@ -43,7 +45,7 @@ body {
 
 body {
 	position: relative;
-	padding: 18px;
+	padding: 16px;
 	user-select: none;
 }
 
@@ -64,7 +66,7 @@ header {
 	display: flex;
 	align-items: center;
 	height: 34px;
-	margin-bottom: 14px;
+	margin-bottom: 12px;
 }
 
 header h1 {
@@ -76,8 +78,8 @@ header h1 {
 
 #theme-toggle {
 	position: absolute;
-	top: 17px;
-	right: 18px;
+	top: 15px;
+	right: 16px;
 	display: grid;
 	place-items: center;
 	width: 32px;
@@ -106,7 +108,7 @@ input:focus-visible {
 }
 
 #all-elements {
-	padding: 16px;
+	padding: 14px;
 	border: 1px solid var(--border);
 	border-radius: 10px;
 	background: var(--surface);
@@ -116,19 +118,14 @@ input:focus-visible {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
 	min-height: 30px;
-	margin-bottom: 18px;
+	margin-bottom: 12px;
 }
 
 .element-label {
-	min-width: 0;
 	color: var(--text);
 	font-size: 13px;
-	font-weight: 600;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	font-weight: 650;
 }
 
 .element-reset,
@@ -142,10 +139,12 @@ input:focus-visible {
 
 .element-reset {
 	flex: 0 0 auto;
-	padding: 6px 10px;
+	height: 30px;
+	padding: 0 12px;
 	border-radius: 6px;
+	background: var(--control-bg);
 	color: var(--muted);
-	font-size: 12px;
+	font-size: 11px;
 }
 
 .element-reset:hover,
@@ -155,12 +154,112 @@ input:focus-visible {
 	color: var(--accent);
 }
 
+.element-reset:hover {
+	border-color: var(--accent);
+	background: var(--surface-raised);
+}
+
+.footer-actions {
+	display: block;
+}
+
+.site-profile-row {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 5px;
+	margin: 14px 0 0;
+	padding: 12px 0 0;
+	border-top: 1px solid var(--border);
+}
+
+.site-profile-row[hidden] {
+	display: none;
+}
+
+.site-profile-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
+	margin: 0;
+	cursor: pointer;
+}
+
+.site-profile-label {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.site-profile-status {
+	display: none;
+	max-width: 220px;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.35;
+	text-align: left;
+}
+
+.site-profile-status[data-state="error"] {
+	display: block;
+	color: var(--danger);
+}
+
+.site-profile-toggle input {
+	position: relative;
+	width: 30px;
+	height: 17px;
+	margin: 0;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--track);
+	appearance: none;
+	-webkit-appearance: none;
+	cursor: pointer;
+	transition: border-color 120ms ease, background 120ms ease;
+}
+
+.site-profile-toggle input::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 11px;
+	height: 11px;
+	border-radius: 50%;
+	background: var(--muted);
+	transition: transform 120ms ease, background 120ms ease;
+}
+
+.site-profile-toggle input:checked {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.site-profile-toggle input:checked::after {
+	background: var(--accent);
+	transform: translateX(13px);
+}
+
+.site-profile-toggle input:disabled {
+	cursor: wait;
+	opacity: 0.65;
+}
+
+button:disabled,
+input:disabled {
+	cursor: not-allowed;
+}
+
 #all-elements > div > label:not(.eq-band) {
 	display: grid;
 	grid-template-columns: 48px minmax(0, 1fr) 56px;
 	align-items: center;
 	gap: 12px;
-	margin: 0 0 16px;
+	margin: 0 0 14px;
 }
 
 #all-elements > div > label:not(.eq-band) > span {
@@ -314,13 +413,10 @@ input[type="number"]:focus {
 	display: grid;
 	grid-template-columns: repeat(5, 1fr);
 	gap: 6px;
-	max-height: 148px;
 	margin-top: 12px;
 	padding: 12px 8px;
 	border-radius: 8px;
 	background: var(--surface-raised);
-	overflow: hidden;
-	transition: max-height 160ms ease, margin 160ms ease, padding 160ms ease;
 }
 
 .equalizer-section.collapsed .preset-buttons {
@@ -328,10 +424,7 @@ input[type="number"]:focus {
 }
 
 .equalizer-section.collapsed .equalizer-controls {
-	max-height: 0;
-	margin-top: 0;
-	padding-top: 0;
-	padding-bottom: 0;
+	display: none;
 }
 
 .eq-band {
@@ -389,9 +482,7 @@ input[type="number"]:focus {
 	display: flex;
 	align-items: center;
 	gap: 22px;
-	margin-top: 16px;
-	padding-top: 14px;
-	border-top: 1px solid var(--border);
+	margin-top: 12px;
 }
 
 .checkboxes label {

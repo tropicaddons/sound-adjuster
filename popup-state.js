@@ -112,6 +112,20 @@
 		};
 	}
 
+	function readSettingsFromControls(container) {
+		return normalizeSettings({
+			gain: container.querySelector('.element-gain')?.value,
+			pan: container.querySelector('.element-pan')?.value,
+			mono: container.querySelector('.element-mono')?.checked === true,
+			flip: container.querySelector('.element-flip')?.checked === true,
+			eqBass: container.querySelector('.element-eq-bass')?.value,
+			eqLowMid: container.querySelector('.element-eq-lowmid')?.value,
+			eqMid: container.querySelector('.element-eq-mid')?.value,
+			eqHighMid: container.querySelector('.element-eq-highmid')?.value,
+			eqTreble: container.querySelector('.element-eq-treble')?.value
+		});
+	}
+
 	function updateEqualizerView(container, expanded) {
 		const section = container.querySelector('.equalizer-section');
 		const toggle = container.querySelector('.equalizer-toggle');
@@ -146,6 +160,7 @@
 		applySettingsToControls,
 		findMatchingPreset,
 		normalizeSettings,
+		readSettingsFromControls,
 		restoreEqualizerExpanded,
 		setEqualizerExpanded,
 		updatePresetButtons
