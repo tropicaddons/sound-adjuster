@@ -1,18 +1,51 @@
 'use strict';
 
-// Modern UI Elements
 let tid = 0;
 let activeTab = null;
 let siteProfileStatus = { eligible: false, remembered: false, profile: null };
+let siteExceptionStatus = { eligible: false, siteKey: null, disabled: false };
+let namedProfilesStatus = { eligible: false, siteKey: null, profiles: [] };
 const frameMap = new Map();
 let referenceMediaKey = null;
+let currentControlsNode = null;
 const allElements = document.getElementById('all-elements');
 const elementsTpl = document.getElementById('elements-tpl');
 const themeToggle = document.getElementById('theme-toggle');
+const siteFooter = document.querySelector('.site-footer');
+const siteHostname = document.querySelector('.site-hostname');
+const siteProfileToggle = document.querySelector('.site-profile-toggle');
+const rememberSite = document.querySelector('.remember-site');
+const profileStatusText = document.querySelector('.site-profile-status');
+const moreMenuWrap = document.querySelector('.more-menu-wrap');
+const moreMenuButton = document.querySelector('.more-menu-button');
+const moreMenu = document.querySelector('.more-menu');
+const menuMain = document.querySelector('.menu-main');
+const disableSiteButton = document.querySelector('.menu-disable-site');
+const profileDefault = document.querySelector('.profile-default');
+const profileList = document.querySelector('.profile-list');
+const profileScrollHint = document.querySelector('.profile-scroll-hint');
+const activeProfileName = document.querySelector('.active-profile-name');
+const newProfileButton = document.querySelector('.menu-new-profile');
+const profilesMenuButton = document.querySelector('.menu-profiles');
+const profileFlyout = document.querySelector('.profile-flyout');
+const backToMainMenuButton = document.querySelector('.menu-back-main');
+const profileNameForm = document.querySelector('.profile-name-form');
+const profileNameInput = document.querySelector('.profile-name-input');
+const profileFormStatus = document.querySelector('.profile-form-status');
+const profileSaveButton = document.querySelector('.profile-save-button');
+const profileCancelButton = document.querySelector('.profile-cancel-button');
+const manageProfilesButton = document.querySelector('.menu-manage-profiles');
+const copyDiagnosticsButton = document.querySelector('.menu-copy-diagnostics');
+const manageExceptionsButton = document.querySelector('.menu-manage-exceptions');
 let noMediaStateVisible = false;
 let autoMediaScanTimer = null;
 let autoMediaScanInFlight = false;
+let profileOperationQueue = Promise.resolve();
+let profileFeedbackSequence = 0;
+let footerFeedbackTimer = null;
+let profileManageMode = false;
 const AUTO_MEDIA_SCAN_INTERVAL_MS = 700;
+const MAX_NAMED_PROFILES_PER_SITE = 12;
 
 // Equalizer Presets
 const equalizerPresets = {
@@ -29,6 +62,8 @@ const equalizerPresets = {
 const {
 	DEFAULT_SETTINGS: POPUP_DEFAULT_SETTINGS,
 	applySettingsToControls,
+	bindWheelAdjustment,
+	normalizeSettings,
 	readSettingsFromControls,
 	restoreEqualizerExpanded,
 	setEqualizerExpanded,
@@ -44,12 +79,39 @@ function sendProfileMessage(action, settings) {
 	});
 }
 
+function sendContextMessage(action, details = {}) {
+	return browser.runtime.sendMessage({
+		action,
+		tabUrl: activeTab?.url,
+		incognito: activeTab?.incognito === true,
+		...details
+	});
+}
+
 async function loadSiteProfileStatus() {
 	try {
 		return await sendProfileMessage('getSiteProfile');
 	} catch (error) {
 		console.warn('Unable to read the site profile:', error);
 		return { eligible: false, remembered: false, profile: null };
+	}
+}
+
+async function loadSiteExceptionStatus() {
+	try {
+		return await sendContextMessage('getSiteExceptionStatus');
+	} catch (error) {
+		console.warn('Unable to read the site exception status:', error);
+		return { eligible: false, siteKey: null, disabled: false };
+	}
+}
+
+async function loadNamedProfilesStatus() {
+	try {
+		return await sendContextMessage('getNamedProfiles');
+	} catch (error) {
+		console.warn('Unable to read named profiles:', error);
+		return { eligible: false, siteKey: null, profiles: [] };
 	}
 }
 
@@ -78,7 +140,486 @@ function toggleTheme() {
 initializeTheme();
 themeToggle.addEventListener('click', toggleTheme);
 
-function createEmptyState(titleText, descriptionText) {
+function getActiveSiteKey() {
+	const knownSiteKey = siteProfileStatus?.siteKey || siteExceptionStatus?.siteKey || namedProfilesStatus?.siteKey;
+	if (knownSiteKey) return knownSiteKey;
+	try {
+		const url = new URL(activeTab?.url);
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+		let hostname = url.hostname.toLowerCase();
+		if (hostname.startsWith('www.')) hostname = hostname.slice(4);
+		return url.port ? `${hostname}:${url.port}` : hostname;
+	} catch (error) {
+		return null;
+	}
+}
+
+function setFooterFeedback(text, state = 'idle', timeout = 0) {
+	clearTimeout(footerFeedbackTimer);
+	footerFeedbackTimer = null;
+	if (!profileStatusText) return;
+	profileStatusText.textContent = text;
+	profileStatusText.dataset.state = state;
+	if (text && timeout > 0) {
+		footerFeedbackTimer = setTimeout(() => {
+			profileStatusText.textContent = '';
+			profileStatusText.dataset.state = 'idle';
+		}, timeout);
+	}
+}
+
+function showCurrentProfileStatus() {
+	setFooterFeedback('');
+}
+
+function queueProfileOperation(operation) {
+	profileOperationQueue = profileOperationQueue
+		.catch(() => undefined)
+		.then(operation);
+	return profileOperationQueue;
+}
+
+function settingsMatch(first, second) {
+	const firstSettings = normalizeSettings(first);
+	const secondSettings = normalizeSettings(second);
+	return Object.keys(POPUP_DEFAULT_SETTINGS).every(key => {
+		if (typeof POPUP_DEFAULT_SETTINGS[key] === 'boolean') {
+			return firstSettings[key] === secondSettings[key];
+		}
+		return Math.abs(firstSettings[key] - secondSettings[key]) < 0.0001;
+	});
+}
+
+function getActiveNamedProfile() {
+	if (!currentControlsNode) return null;
+	const settings = readSettingsFromControls(currentControlsNode);
+	if (settingsMatch(settings, POPUP_DEFAULT_SETTINGS)) {
+		return { id: 'default', name: 'Default', settings: POPUP_DEFAULT_SETTINGS, builtIn: true };
+	}
+	return namedProfilesStatus.profiles?.find(profile => settingsMatch(settings, profile.settings)) || null;
+}
+
+function hideProfileNameForm() {
+	profileNameForm.hidden = true;
+	profileFlyout.classList.remove('profile-form-open');
+	newProfileButton.hidden = false;
+	profileNameInput.value = '';
+	profileFormStatus.textContent = '';
+}
+
+function showProfileNameForm() {
+	setFooterFeedback('');
+	profileFormStatus.textContent = '';
+	newProfileButton.hidden = true;
+	profileNameForm.hidden = false;
+	profileFlyout.classList.add('profile-form-open');
+	profileNameInput.focus();
+}
+
+function updateProfileScrollHint() {
+	if (!profileScrollHint || !profileList) return;
+	const hasMoreBelow = profileList.scrollHeight > profileList.clientHeight + 1
+		&& profileList.scrollTop + profileList.clientHeight < profileList.scrollHeight - 1;
+	profileScrollHint.hidden = !hasMoreBelow;
+}
+
+function scheduleProfileScrollHintUpdate() {
+	requestAnimationFrame(updateProfileScrollHint);
+}
+
+function setProfileFlyoutOpen(open, restoreFocus = false) {
+	const isOpen = open === true;
+	if (isOpen) {
+		profileManageMode = false;
+		hideProfileNameForm();
+		renderNamedProfiles();
+		profileList.scrollTop = 0;
+		scheduleProfileScrollHintUpdate();
+	}
+	profileFlyout.hidden = !isOpen;
+	menuMain.hidden = isOpen;
+	profilesMenuButton.setAttribute('aria-expanded', String(isOpen));
+	if (!isOpen) hideProfileNameForm();
+	if (!isOpen && restoreFocus) profilesMenuButton.focus();
+}
+
+function renderNamedProfiles() {
+	if (!profileDefault || !profileList) return;
+	profileDefault.replaceChildren();
+	profileList.replaceChildren();
+	const activeProfile = getActiveNamedProfile();
+	activeProfileName.textContent = activeProfile?.name || 'Custom';
+
+	const profiles = [
+		{ id: 'default', name: 'Default', settings: POPUP_DEFAULT_SETTINGS, builtIn: true },
+		...(namedProfilesStatus.profiles || [])
+	];
+
+	for (const profile of profiles) {
+		const item = document.createElement('div');
+		item.className = 'profile-item';
+
+		const selectButton = document.createElement('button');
+		selectButton.type = 'button';
+		selectButton.className = 'profile-select-button';
+		selectButton.setAttribute('role', 'menuitemradio');
+		selectButton.disabled = !currentControlsNode || siteExceptionStatus?.disabled === true;
+		const isActive = activeProfile?.id === profile.id;
+		selectButton.setAttribute('aria-checked', String(isActive));
+		selectButton.classList.toggle('active', isActive);
+
+		const check = document.createElement('span');
+		check.className = 'profile-check';
+		check.textContent = isActive ? '✓' : '';
+		const name = document.createElement('span');
+		name.className = 'profile-item-name';
+		name.textContent = profile.name;
+		selectButton.append(check, name);
+		selectButton.addEventListener('click', () => applyNamedProfile(profile));
+		item.appendChild(selectButton);
+
+		if (!profile.builtIn) {
+			const removeButton = document.createElement('button');
+			removeButton.type = 'button';
+			removeButton.className = 'profile-delete-button';
+			removeButton.textContent = '×';
+			removeButton.title = `Remove ${profile.name}`;
+			removeButton.setAttribute('aria-label', removeButton.title);
+			removeButton.hidden = !profileManageMode;
+			removeButton.addEventListener('click', () => removeNamedProfileFromSite(profile));
+			item.appendChild(removeButton);
+		}
+
+		(profile.builtIn ? profileDefault : profileList).appendChild(item);
+	}
+
+	manageProfilesButton.textContent = profileManageMode ? 'Done' : 'Manage profiles';
+	manageProfilesButton.disabled = namedProfilesStatus.eligible !== true
+		|| (namedProfilesStatus.profiles || []).length === 0;
+	scheduleProfileScrollHintUpdate();
+}
+
+async function applyNamedProfile(profile) {
+	if (!currentControlsNode || siteExceptionStatus?.disabled === true) return;
+	try {
+		const restored = applySettingsToControls(currentControlsNode, profile.settings, equalizerPresets);
+		await applySettingsToAllMedia(restored.settings);
+		await persistCurrentProfile();
+		renderNamedProfiles();
+		setMoreMenuOpen(false);
+		setFooterFeedback(`${profile.name} applied`, 'info', 1800);
+	} catch (error) {
+		console.warn('Unable to apply the selected profile:', error);
+		setFooterFeedback('Couldn’t apply profile', 'error');
+	}
+}
+
+async function removeNamedProfileFromSite(profile) {
+	try {
+		namedProfilesStatus = await sendContextMessage('removeNamedProfile', { profileId: profile.id });
+		profileManageMode = (namedProfilesStatus.profiles || []).length > 0;
+		renderNamedProfiles();
+		updateSiteFooter();
+		setFooterFeedback('');
+	} catch (error) {
+		console.warn('Unable to remove the selected profile:', error);
+		setFooterFeedback('Couldn’t remove profile', 'error');
+	}
+}
+
+async function saveCurrentNamedProfile(name) {
+	if (!currentControlsNode) return;
+	profileSaveButton.disabled = true;
+	try {
+		namedProfilesStatus = await sendContextMessage('saveNamedProfile', {
+			name,
+			settings: readSettingsFromControls(currentControlsNode)
+		});
+		hideProfileNameForm();
+		renderNamedProfiles();
+		updateSiteFooter();
+		setFooterFeedback('');
+	} catch (error) {
+		console.warn('Unable to save the named profile:', error);
+		profileFormStatus.textContent = /profile name is required/i.test(error?.message || '')
+			? 'Enter a profile name'
+			: 'Couldn’t save profile';
+	} finally {
+		profileSaveButton.disabled = false;
+	}
+}
+
+function updateSiteFooter() {
+	const siteKey = getActiveSiteKey();
+	if (!siteFooter) return;
+	siteFooter.hidden = !siteKey;
+	if (!siteKey) return;
+
+	siteHostname.textContent = siteKey;
+	siteHostname.title = siteKey;
+	moreMenuWrap.hidden = noMediaStateVisible;
+	if (noMediaStateVisible) setMoreMenuOpen(false);
+
+	const profileEligible = siteProfileStatus?.eligible === true;
+	const hasEditableControls = Boolean(currentControlsNode) && siteExceptionStatus?.disabled !== true;
+	siteProfileToggle.hidden = !profileEligible || (!hasEditableControls && siteProfileStatus?.remembered !== true);
+	rememberSite.checked = siteProfileStatus?.remembered === true;
+
+	disableSiteButton.disabled = siteExceptionStatus?.eligible !== true;
+	disableSiteButton.textContent = siteExceptionStatus?.disabled
+		? 'Enable on this site'
+		: 'Disable on this site';
+	newProfileButton.disabled = !hasEditableControls || namedProfilesStatus?.eligible !== true;
+	newProfileButton.disabled = newProfileButton.disabled
+		|| (namedProfilesStatus.profiles || []).length >= MAX_NAMED_PROFILES_PER_SITE;
+	newProfileButton.title = (namedProfilesStatus.profiles || []).length >= MAX_NAMED_PROFILES_PER_SITE
+		? `Maximum ${MAX_NAMED_PROFILES_PER_SITE} profiles per site`
+		: '';
+	manageProfilesButton.disabled = namedProfilesStatus?.eligible !== true
+		|| (namedProfilesStatus.profiles || []).length === 0;
+	renderNamedProfiles();
+}
+
+function setMoreMenuOpen(open) {
+	const isOpen = open === true;
+	if (isOpen) {
+		profileManageMode = false;
+		renderNamedProfiles();
+	}
+	setProfileFlyoutOpen(false);
+	moreMenu.hidden = !isOpen;
+	moreMenuButton.setAttribute('aria-expanded', String(isOpen));
+}
+
+async function persistCurrentProfile() {
+	if (!rememberSite?.checked || !currentControlsNode) return;
+	const feedbackId = ++profileFeedbackSequence;
+	try {
+		const settings = readSettingsFromControls(currentControlsNode);
+		siteProfileStatus = await queueProfileOperation(() => (
+			sendProfileMessage('saveSiteProfile', settings)
+		));
+		if (feedbackId === profileFeedbackSequence) showCurrentProfileStatus();
+	} catch (error) {
+		console.warn('Unable to save the site profile:', error);
+		if (feedbackId === profileFeedbackSequence) {
+			setFooterFeedback('Couldn’t save settings', 'error');
+		}
+	}
+	updateSiteFooter();
+}
+
+function applySettingsToAllMedia(settings) {
+	const operations = [];
+	for (const [fid, elements] of frameMap) {
+		for (const [elid] of elements) {
+			operations.push(applySettings(fid, elid, settings));
+		}
+	}
+	return Promise.all(operations);
+}
+
+function buildDiagnosticsText() {
+	const capabilities = new Map();
+	const reasons = new Map();
+	let mediaCount = 0;
+	for (const mediaMap of frameMap.values()) {
+		for (const media of mediaMap.values()) {
+			mediaCount += 1;
+			const mode = media?.capability?.mode || 'unknown';
+			const reason = media?.capability?.reason || 'none';
+			capabilities.set(mode, (capabilities.get(mode) || 0) + 1);
+			reasons.set(reason, (reasons.get(reason) || 0) + 1);
+		}
+	}
+
+	const formatCounts = counts => [...counts.entries()]
+		.map(([name, count]) => `${name}=${count}`)
+		.join(', ') || 'none';
+	const settings = currentControlsNode
+		? readSettingsFromControls(currentControlsNode)
+		: null;
+	const activeNamedProfile = getActiveNamedProfile();
+
+	return [
+		'Sound Adjuster diagnostics',
+		`Version: ${browser.runtime.getManifest().version}`,
+		`Site: ${getActiveSiteKey() || 'unavailable'}`,
+		`Site disabled: ${siteExceptionStatus?.disabled === true ? 'yes' : 'no'}`,
+		`Remembered profile: ${siteProfileStatus?.remembered === true ? 'yes' : 'no'}`,
+		`Named profiles: ${(namedProfilesStatus.profiles || []).length}`,
+		`Active named profile: ${activeNamedProfile?.name || 'Custom'}`,
+		`Frames scanned: ${frameMap.size}`,
+		`Media elements: ${mediaCount}`,
+		`Capabilities: ${formatCounts(capabilities)}`,
+		`Reasons: ${formatCounts(reasons)}`,
+		`Settings: ${settings ? JSON.stringify(settings) : 'unavailable'}`,
+		`Browser: ${navigator.userAgent}`,
+		`Generated: ${new Date().toISOString()}`
+	].join('\n');
+}
+
+async function copyText(text) {
+	if (navigator.clipboard?.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return;
+		} catch (error) {
+			// Fall back to the temporary textarea below.
+		}
+	}
+	const textarea = document.createElement('textarea');
+	textarea.value = text;
+	textarea.setAttribute('readonly', '');
+	textarea.style.position = 'fixed';
+	textarea.style.opacity = '0';
+	document.body.appendChild(textarea);
+	textarea.select();
+	const copied = document.execCommand('copy');
+	textarea.remove();
+	if (!copied) throw new Error('Clipboard copy was rejected');
+}
+
+async function notifyFramesSiteDisabled(disabled) {
+	const frames = await browser.webNavigation.getAllFrames({ tabId: tid });
+	await Promise.all(frames.map(frame => (
+		browser.tabs.sendMessage(tid, {
+			action: 'setSiteDisabled',
+			disabled
+		}, { frameId: frame.frameId }).catch(() => undefined)
+	)));
+}
+
+async function toggleSiteException() {
+	if (siteExceptionStatus?.eligible !== true) return;
+	disableSiteButton.disabled = true;
+	const shouldDisable = siteExceptionStatus.disabled !== true;
+	try {
+		siteExceptionStatus = await sendContextMessage(
+			shouldDisable ? 'addSiteException' : 'removeSiteException'
+		);
+		await notifyFramesSiteDisabled(shouldDisable);
+		const frameResults = await scanMedia();
+		renderFrameResults(frameResults);
+		setFooterFeedback(
+			shouldDisable ? 'Disabled for this site' : 'Enabled for this site',
+			'info',
+			1800
+		);
+	} catch (error) {
+		console.warn('Unable to update the site exception:', error);
+		setFooterFeedback('Couldn’t update site access', 'error');
+	} finally {
+		updateSiteFooter();
+	}
+}
+
+function initializeSiteFooterActions() {
+	moreMenuButton.addEventListener('click', event => {
+		event.stopPropagation();
+		setMoreMenuOpen(moreMenu.hidden);
+	});
+	moreMenu.addEventListener('click', event => event.stopPropagation());
+	document.addEventListener('click', () => setMoreMenuOpen(false));
+	document.addEventListener('keydown', event => {
+		if (event.key !== 'Escape') return;
+		if (!profileNameForm.hidden) {
+			hideProfileNameForm();
+			return;
+		}
+		if (!profileFlyout.hidden) {
+			setProfileFlyoutOpen(false, true);
+			return;
+		}
+		setMoreMenuOpen(false);
+	});
+
+	rememberSite.addEventListener('change', async () => {
+		const shouldRemember = rememberSite.checked;
+		const feedbackId = ++profileFeedbackSequence;
+		rememberSite.disabled = true;
+		setFooterFeedback('');
+		try {
+			siteProfileStatus = await queueProfileOperation(() => (
+				shouldRemember
+					? sendProfileMessage('saveSiteProfile', readSettingsFromControls(currentControlsNode))
+					: sendProfileMessage('removeSiteProfile')
+			));
+			rememberSite.checked = siteProfileStatus.remembered === true;
+			if (feedbackId === profileFeedbackSequence) showCurrentProfileStatus();
+		} catch (error) {
+			console.warn('Unable to update the site profile:', error);
+			rememberSite.checked = !shouldRemember;
+			if (feedbackId === profileFeedbackSequence) {
+				setFooterFeedback('Couldn’t update profile', 'error');
+			}
+		} finally {
+			rememberSite.disabled = false;
+			updateSiteFooter();
+		}
+	});
+
+	disableSiteButton.addEventListener('click', async () => {
+		setMoreMenuOpen(false);
+		await toggleSiteException();
+	});
+	newProfileButton.addEventListener('click', showProfileNameForm);
+	profilesMenuButton.addEventListener('click', () => {
+		setProfileFlyoutOpen(profileFlyout.hidden);
+	});
+	backToMainMenuButton.addEventListener('click', () => {
+		setProfileFlyoutOpen(false, true);
+	});
+	profilesMenuButton.addEventListener('keydown', event => {
+		if (event.key !== 'ArrowRight') return;
+		event.preventDefault();
+		setProfileFlyoutOpen(true);
+		profileFlyout.querySelector('button:not(:disabled)')?.focus();
+	});
+	profileFlyout.addEventListener('keydown', event => {
+		if (event.key !== 'ArrowLeft' || event.target === profileNameInput) return;
+		event.preventDefault();
+		setProfileFlyoutOpen(false, true);
+	});
+	profileList.addEventListener('scroll', updateProfileScrollHint);
+	profileCancelButton.addEventListener('click', hideProfileNameForm);
+	profileNameInput.addEventListener('input', () => {
+		profileFormStatus.textContent = '';
+	});
+	profileNameForm.addEventListener('submit', event => {
+		event.preventDefault();
+		const name = profileNameInput.value.trim();
+		if (!name) {
+			profileNameInput.focus();
+			profileFormStatus.textContent = 'Enter a profile name';
+			return;
+		}
+		saveCurrentNamedProfile(name);
+	});
+	manageProfilesButton.addEventListener('click', () => {
+		profileManageMode = !profileManageMode;
+		hideProfileNameForm();
+		renderNamedProfiles();
+	});
+	copyDiagnosticsButton.addEventListener('click', async () => {
+		setMoreMenuOpen(false);
+		try {
+			await copyText(buildDiagnosticsText());
+			setFooterFeedback('Diagnostics copied', 'info', 1800);
+		} catch (error) {
+			console.warn('Unable to copy diagnostics:', error);
+			setFooterFeedback('Couldn’t copy diagnostics', 'error');
+		}
+	});
+	manageExceptionsButton.addEventListener('click', () => {
+		setMoreMenuOpen(false);
+		browser.runtime.openOptionsPage();
+	});
+}
+
+initializeSiteFooterActions();
+
+function createEmptyState(titleText, descriptionText, includeReloadButton = true) {
 	const emptyState = document.createElement('div');
 	emptyState.className = 'empty-state';
 
@@ -98,12 +639,13 @@ function createEmptyState(titleText, descriptionText) {
 
 	emptyState.appendChild(title);
 	emptyState.appendChild(description);
-	emptyState.appendChild(reloadButton);
+	if (includeReloadButton) emptyState.appendChild(reloadButton);
 	return emptyState;
 
 }
 
 function showNoMediaState() {
+	currentControlsNode = null;
 	noMediaStateVisible = true;
 	allElements.innerHTML = '';
 	allElements.classList.add('is-empty');
@@ -112,59 +654,75 @@ function showNoMediaState() {
 		'Start playing audio or video. It will appear here automatically.'
 	));
 	scheduleAutoMediaScan();
+	updateSiteFooter();
 }
 
 function showUnavailableMediaState(capability) {
 	const descriptions = {
-		'site-restricted': 'This site restricts direct audio processing. Playback is left unchanged.',
-		'cross-origin-media': 'This media is protected by cross-origin security. Playback is left unchanged.',
-		'protected-media': 'Protected media cannot be processed safely. Playback is left unchanged.',
-		'audio-graph-failed': 'Firefox could not create a safe audio connection for this media.',
-		'web-audio-unavailable': 'Advanced audio processing is not available for this media.'
+		'site-restricted': 'This site prevents Sound Adjuster from safely accessing its audio. Playback continues normally.',
+		'cross-origin-media': 'Firefox blocks the audio access needed for this media source. Playback continues normally.',
+		'protected-media': 'This media uses protected playback, so Firefox does not allow extensions to adjust its audio. Playback continues normally.',
+		'audio-graph-failed': 'Sound Adjuster could not create a safe audio connection. Playback continues normally.',
+		'web-audio-unavailable': 'Firefox does not provide the audio access needed for this media. Playback continues normally.'
 	};
 
+	currentControlsNode = null;
 	noMediaStateVisible = false;
 	stopAutoMediaScan();
 	allElements.innerHTML = '';
 	allElements.classList.add('is-empty');
 	allElements.appendChild(createEmptyState(
-		'Audio boost unavailable',
-		descriptions[capability?.reason] || 'This media cannot be processed safely. Playback is left unchanged.'
+		'Audio controls unavailable',
+		descriptions[capability?.reason] || 'Sound Adjuster cannot safely process this media. Playback continues normally.'
 	));
+	updateSiteFooter();
+}
+
+function showSiteDisabledState() {
+	currentControlsNode = null;
+	noMediaStateVisible = false;
+	stopAutoMediaScan();
+	allElements.innerHTML = '';
+	allElements.classList.add('is-empty');
+	allElements.appendChild(createEmptyState(
+		'Sound Adjuster is off',
+		'This site is in your exceptions. Re-enable it from the ⋯ menu when you want to use audio controls again.',
+		false
+	));
+	updateSiteFooter();
 }
 
 function applySettings(fid, elid, newSettings) {
-	console.log(`🎚️ Applying settings to element ${elid} in frame ${fid}:`, newSettings);
 	return browser.tabs.sendMessage(tid, {
 		action: "applySettings",
 		elid: elid,
 		settings: newSettings
 	}, { frameId: fid }).then(result => {
 		const capability = result?.capability;
-		if (`${fid}:${elid}` === referenceMediaKey && capability && capability.mode !== 'full' && capability.mode !== 'pending') {
-			showUnavailableMediaState(capability);
+		if (`${fid}:${elid}` === referenceMediaKey && capability) {
+			if (capability.mode === 'disabled') showSiteDisabledState();
+			if (capability.mode === 'basic' || capability.mode === 'unsupported') {
+				showUnavailableMediaState(capability);
+			}
 		}
 		return result;
 	}).catch(err => {
-		console.error(`❌ Failed to apply settings to element ${elid}:`, err);
+		console.error(`Failed to apply settings to element ${elid}:`, err);
 		throw err;
 	});
 }
 
 function scanMedia() {
-	console.log("🔍 Scanning media elements...");
 	return browser.webNavigation.getAllFrames({ tabId: tid }).then(frames => {
-		console.log(`📋 Found ${frames.length} frames to scan`);
 		return Promise.all(frames.map(frame =>
 			browser.tabs.sendMessage(tid, { action: "scanMedia" }, { frameId: frame.frameId })
 			.then(result => {
-				console.log(`✅ Frame ${frame.frameId}: Found ${result && result.media ? Object.keys(result.media).length : 0} media elements`);
 				return {
 					frameId: frame.frameId,
 					media: result ? result.media : {}
 				};
 			}).catch(err => {
-				console.warn(`❌ Frame ${frame.frameId}:`, err.message);
+				console.warn(`Unable to scan frame ${frame.frameId}:`, err.message);
 				return { frameId: frame.frameId, media: {} };
 			})
 		));
@@ -210,7 +768,6 @@ async function scanForNewMedia() {
 }
 
 function renderFrameResults(frameResults) {
-		console.log("📊 Frame scan results:", frameResults);
 		let elCount = 0;
 
 		// Clear existing frame map
@@ -225,12 +782,10 @@ function renderFrameResults(frameResults) {
 		}
 
 		if (elCount == 0) {
-			console.log("No media elements found - showing empty state");
 			showNoMediaState();
 		} else {
 			noMediaStateVisible = false;
 			stopAutoMediaScan();
-			console.log(`🎉 Found ${elCount} media elements total`);
 			const scannedMedia = [];
 			for (const [fid, mediaMap] of frameMap) {
 				for (const [elid, media] of mediaMap) {
@@ -241,6 +796,11 @@ function renderFrameResults(frameResults) {
 			const referenceEntry = scannedMedia.find(entry => entry.media.isPlaying) || scannedMedia[0];
 			const referenceMedia = referenceEntry.media;
 			referenceMediaKey = `${referenceEntry.fid}:${referenceEntry.elid}`;
+
+			if (referenceMedia.capability?.mode === 'disabled') {
+				showSiteDisabledState();
+				return;
+			}
 
 			if (referenceMedia.capability?.mode === 'basic' || referenceMedia.capability?.mode === 'unsupported') {
 				showUnavailableMediaState(referenceMedia.capability);
@@ -258,86 +818,12 @@ function renderFrameResults(frameResults) {
 				equalizerPresets
 			);
 
-			const rememberRow = node.querySelector('.site-profile-row');
-			const rememberSite = node.querySelector('.remember-site');
-			const profileStatusText = node.querySelector('.site-profile-status');
-			let profileOperationQueue = Promise.resolve();
-			let profileFeedbackSequence = 0;
-
-			function setProfileFeedback(text, state = 'idle') {
-				if (!profileStatusText) return;
-				profileStatusText.textContent = text;
-				profileStatusText.dataset.state = state;
-			}
-
-			function showCurrentProfileStatus(status = siteProfileStatus) {
-				setProfileFeedback('');
-			}
-
-			function queueProfileOperation(operation) {
-				profileOperationQueue = profileOperationQueue
-					.catch(() => undefined)
-					.then(operation);
-				return profileOperationQueue;
-			}
-
-			async function persistCurrentProfile() {
-				if (!rememberSite?.checked) return;
-				const feedbackId = ++profileFeedbackSequence;
-				try {
-					const settings = readSettingsFromControls(node);
-					siteProfileStatus = await queueProfileOperation(() => (
-						sendProfileMessage('saveSiteProfile', settings)
-					));
-					if (feedbackId === profileFeedbackSequence) showCurrentProfileStatus();
-					rememberRow.title = '';
-				} catch (error) {
-					console.warn('Unable to save the site profile:', error);
-					if (feedbackId === profileFeedbackSequence) {
-						setProfileFeedback('Couldn’t save settings', 'error');
-					}
-					rememberRow.title = 'Unable to save this site profile';
-				}
-			}
-
-			if (rememberRow && rememberSite && siteProfileStatus?.eligible) {
-				rememberRow.hidden = false;
-				rememberSite.checked = siteProfileStatus.remembered === true;
-				showCurrentProfileStatus();
-				rememberSite.addEventListener('change', async () => {
-					const shouldRemember = rememberSite.checked;
-					const feedbackId = ++profileFeedbackSequence;
-					rememberSite.disabled = true;
-					setProfileFeedback('');
-					try {
-						siteProfileStatus = await queueProfileOperation(() => (
-							shouldRemember
-								? sendProfileMessage('saveSiteProfile', readSettingsFromControls(node))
-								: sendProfileMessage('removeSiteProfile')
-						));
-						rememberSite.checked = siteProfileStatus.remembered === true;
-						if (feedbackId === profileFeedbackSequence) {
-							showCurrentProfileStatus();
-						}
-						rememberRow.title = '';
-					} catch (error) {
-						console.warn('Unable to update the site profile:', error);
-						rememberSite.checked = !shouldRemember;
-						if (feedbackId === profileFeedbackSequence) {
-							setProfileFeedback('Couldn’t update profile', 'error');
-						}
-						rememberRow.title = 'Unable to update this site profile';
-					} finally {
-						rememberSite.disabled = false;
-					}
-				});
-			}
-
 			const gain = node.querySelector('.element-gain');
 			const gainNumberInput = node.querySelector('.element-gain-num');
 			gain.style.display = 'inline-block';
 			gain.style.width = '100%';
-			function applyGain (value) {
+			function applyGain (value, formatNumber = true) {
+				value = Math.max(0, Math.min(5, Number.parseFloat(value) || 0));
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, { gain: value });
@@ -349,16 +835,23 @@ function renderFrameResults(frameResults) {
 					}
 				}
 				gain.value = value;
-				gainNumberInput.value = '' + value;
+				if (formatNumber) gainNumberInput.value = value.toFixed(2);
+				renderNamedProfiles();
 			}
-			gain.addEventListener('input', _ => applyGain(+gain.value));
+			gain.addEventListener('input', _ => applyGain(gain.value));
+			bindWheelAdjustment(node.querySelector('.gain-control'), 'gain', () => gain.value, nextValue => {
+				applyGain(nextValue);
+				persistCurrentProfile();
+			});
 			gainNumberInput.addEventListener('input', function () {
+				if (this.value === '') return;
 				if (+this.value > +this.getAttribute('max'))
 					this.value = this.getAttribute('max');
 				if (+this.value < +this.getAttribute('min'))
 					this.value = this.getAttribute('min');
-				applyGain(+this.value);
+				applyGain(this.value, false);
 			});
+			gainNumberInput.addEventListener('change', () => applyGain(gainNumberInput.value, true));
 
 			const pan = node.querySelector('.element-pan');
 			const panNumberInput = node.querySelector('.element-pan-num');
@@ -379,6 +872,11 @@ function renderFrameResults(frameResults) {
 				panNumberInput.value = '' + value;
 			}
 			pan.addEventListener('input', _ => applyPan(pan.value));
+			bindWheelAdjustment(node.querySelector('.pan-control'), 'pan', () => pan.value, nextValue => {
+				applyPan(nextValue);
+				renderNamedProfiles();
+				persistCurrentProfile();
+			});
 			panNumberInput.addEventListener('input', function () {
 				if (+this.value > +this.getAttribute('max'))
 					this.value = this.getAttribute('max');
@@ -456,6 +954,11 @@ function renderFrameResults(frameResults) {
 						equalizerPresets
 					);
 				});
+				bindWheelAdjustment(element.closest('.eq-band'), band, () => element.value, nextValue => {
+					element.value = String(nextValue);
+					element.dispatchEvent(new Event('input', { bubbles: true }));
+					persistCurrentProfile();
+				});
 			};
 
 			setupGlobalEqControl(eqBass, 'eqBass');
@@ -476,7 +979,6 @@ function renderFrameResults(frameResults) {
 						eqSection.classList.contains('collapsed'),
 						localStorage
 					);
-					console.log(`🎛️ Equalizer ${expanded ? 'expanded' : 'collapsed'}`);
 				});
 			}
 
@@ -490,8 +992,6 @@ function renderFrameResults(frameResults) {
 					const preset = equalizerPresets[presetName];
 
 					if (!preset) return;
-
-					console.log(`🎛️ Applying equalizer preset: ${presetName}`, preset);
 
 					// Update slider values
 					if (eqBass) eqBass.value = preset.bass;
@@ -524,6 +1024,7 @@ function renderFrameResults(frameResults) {
 					presetButtons.forEach(btn => btn.classList.remove('active'));
 					this.classList.add('active');
 					activePreset = presetName;
+					renderNamedProfiles();
 					persistCurrentProfile();
   });
 });
@@ -558,6 +1059,7 @@ function renderFrameResults(frameResults) {
 						});
 					}
 				}
+				renderNamedProfiles();
 				persistCurrentProfile();
 			};
 
@@ -566,9 +1068,18 @@ function renderFrameResults(frameResults) {
 				'.element-mono', '.element-flip', '.element-eq-bass', '.element-eq-lowmid',
 				'.element-eq-mid', '.element-eq-highmid', '.element-eq-treble'
 			].join(',')).forEach(control => {
-				control.addEventListener('change', () => persistCurrentProfile());
+				control.addEventListener('input', () => renderNamedProfiles());
+				control.addEventListener('change', () => {
+					renderNamedProfiles();
+					persistCurrentProfile();
+				});
 			});
+			allElements.innerHTML = '';
+			allElements.classList.remove('is-empty');
 			allElements.appendChild(node);
+			currentControlsNode = node;
+			renderNamedProfiles();
+			updateSiteFooter();
 		}
 	}
 
@@ -582,16 +1093,25 @@ browser.runtime.onMessage.addListener((message, sender) => {
 });
 
 window.addEventListener('unload', stopAutoMediaScan);
+window.addEventListener('unload', () => {
+	clearTimeout(footerFeedbackTimer);
+});
 
 browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 	activeTab = tabs[0];
 	tid = activeTab.id;
-	console.log(`🎯 Active tab ID: ${tid}, URL: ${activeTab.url}`);
-	return Promise.all([scanMedia(), loadSiteProfileStatus()]).then(([frameResults, profileStatus]) => {
+	return Promise.all([
+		scanMedia(),
+		loadSiteProfileStatus(),
+		loadSiteExceptionStatus(),
+		loadNamedProfilesStatus()
+	]).then(([frameResults, profileStatus, exceptionStatus, profilesStatus]) => {
 		siteProfileStatus = profileStatus;
+		siteExceptionStatus = exceptionStatus;
+		namedProfilesStatus = profilesStatus;
 		renderFrameResults(frameResults);
 	}).catch(err => {
-		console.error('❌ Error scanning media:', err);
+		console.error('Error scanning media:', err);
 		noMediaStateVisible = false;
 		stopAutoMediaScan();
 		allElements.innerHTML = '';
@@ -600,5 +1120,6 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 			'Unable to scan this page',
 			'The page may not allow extension access. Try again after reloading it.'
 		));
+		updateSiteFooter();
 	});
 });

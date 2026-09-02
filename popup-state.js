@@ -31,6 +31,16 @@
 		{ setting: 'eqTreble', preset: 'treble', selector: '.element-eq-treble' }
 	]);
 	const EQUALIZER_EXPANDED_STORAGE_KEY = 'soundAdjusterEqualizerExpanded';
+	const WHEEL_DELTA_THRESHOLD = 24;
+	const SETTING_STEPS = Object.freeze({
+		gain: 0.05,
+		pan: 0.05,
+		eqBass: 1,
+		eqLowMid: 1,
+		eqMid: 1,
+		eqHighMid: 1,
+		eqTreble: 1
+	});
 
 	function normalizeNumber(value, fallback, min, max) {
 		const parsed = Number.parseFloat(value);
@@ -53,6 +63,40 @@
 		normalized.mono = settings?.mono === true;
 		normalized.flip = settings?.flip === true;
 		return normalized;
+	}
+
+	function stepSettingValue(setting, value, direction) {
+		const range = SETTING_RANGES[setting];
+		const step = SETTING_STEPS[setting];
+		if (!range || !step) throw new TypeError(`Unknown stepped setting: ${setting}`);
+		const current = normalizeNumber(value, DEFAULT_SETTINGS[setting], range[0], range[1]);
+		const stepDirection = direction > 0 ? 1 : direction < 0 ? -1 : 0;
+		if (stepDirection === 0) return current;
+		const stepped = current + (stepDirection * step);
+		return Math.max(range[0], Math.min(range[1], Number(stepped.toFixed(2))));
+	}
+
+	function bindWheelAdjustment(target, setting, readValue, applyValue) {
+		if (!target) return;
+		let accumulatedDelta = 0;
+		target.addEventListener('wheel', event => {
+			event.preventDefault();
+			const normalizedDelta = event.deltaY * (
+				event.deltaMode === 0 ? 1 : WHEEL_DELTA_THRESHOLD
+			);
+			if (normalizedDelta === 0) return;
+			if (accumulatedDelta !== 0 && Math.sign(accumulatedDelta) !== Math.sign(normalizedDelta)) {
+				accumulatedDelta = 0;
+			}
+			accumulatedDelta += normalizedDelta;
+			if (Math.abs(accumulatedDelta) < WHEEL_DELTA_THRESHOLD) return;
+			const direction = accumulatedDelta < 0 ? 1 : -1;
+			accumulatedDelta = 0;
+			const currentValue = Number.parseFloat(readValue());
+			const nextValue = stepSettingValue(setting, currentValue, direction);
+			if (nextValue === currentValue) return;
+			applyValue(nextValue);
+		}, { passive: false });
 	}
 
 	function formatDb(value) {
@@ -91,7 +135,7 @@
 		const flip = container.querySelector('.element-flip');
 
 		if (gain) gain.value = String(normalized.gain);
-		if (gainNumber) gainNumber.value = String(normalized.gain);
+		if (gainNumber) gainNumber.value = normalized.gain.toFixed(2);
 		if (pan) pan.value = String(normalized.pan);
 		if (panNumber) panNumber.value = String(normalized.pan);
 		if (mono) mono.checked = normalized.mono;
@@ -158,11 +202,13 @@
 	const api = {
 		DEFAULT_SETTINGS,
 		applySettingsToControls,
+		bindWheelAdjustment,
 		findMatchingPreset,
 		normalizeSettings,
 		readSettingsFromControls,
 		restoreEqualizerExpanded,
 		setEqualizerExpanded,
+		stepSettingValue,
 		updatePresetButtons
 	};
 

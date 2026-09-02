@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Sound Adjuster — Site exceptions</title>
+	<link rel="stylesheet" href="options.css">
+</head>
+<body>
+	<main>
+		<header class="page-header">
+			<img src="icon.svg" alt="" width="40" height="40">
+			<div>
+				<h1>Site exceptions</h1>
+				<p>Sound Adjuster stays off on these sites.</p>
+			</div>
+		</header>
+
+		<section class="exceptions-card" aria-labelledby="exceptions-title">
+			<div class="card-header">
+				<div>
+					<h2 id="exceptions-title">Disabled sites</h2>
+					<p>Remove a site to allow audio controls again after its tab is reloaded.</p>
+				</div>
+				<button type="button" class="clear-button" hidden>Clear all</button>
+			</div>
+
+			<p class="empty-message">No site exceptions yet.</p>
+			<ul class="exceptions-list" aria-live="polite"></ul>
+			<p class="options-status" role="status" aria-live="polite"></p>
+		</section>
+	</main>
+	<script src="options.js"></script>
+</body>
+</html>

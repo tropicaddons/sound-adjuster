@@ -18,12 +18,12 @@
 				<span class="element-label">All media</span>
 				<button type="button" class="element-reset">Reset</button>
 			</div>
-			<label>
+			<label class="gain-control">
 				<span>Gain</span>
 				<input type="range" class="element-gain" min="0" max="5" step="0.05" value="1" />
 				<input type="number" class="element-gain-num" value="1" min="0" max="5" step="0.05">
 			</label>
-			<label>
+			<label class="pan-control">
 				<span>Pan</span>
 				<input type="range" class="element-pan" min="-1" max="1" step="0.05" value="0" />
 				<input type="number" class="element-pan-num" value="0" min="-1" max="1" step="0.05">
@@ -47,31 +47,31 @@
 				<div class="equalizer-controls">
 					<label class="eq-band">
 						<span class="band-label">Bass</span>
-						<span class="band-freq">60Hz</span>
+						<span class="band-freq">250 Hz</span>
 						<input type="range" class="element-eq-bass" min="-20" max="20" step="1" value="0" orient="vertical" />
 						<span class="band-value">0dB</span>
 					</label>
 					<label class="eq-band">
 						<span class="band-label">Low Mid</span>
-						<span class="band-freq">250Hz</span>
+						<span class="band-freq">500 Hz</span>
 						<input type="range" class="element-eq-lowmid" min="-20" max="20" step="1" value="0" orient="vertical" />
 						<span class="band-value">0dB</span>
 					</label>
 					<label class="eq-band">
 						<span class="band-label">Mid</span>
-						<span class="band-freq">1kHz</span>
+						<span class="band-freq">2 kHz</span>
 						<input type="range" class="element-eq-mid" min="-20" max="20" step="1" value="0" orient="vertical" />
 						<span class="band-value">0dB</span>
 					</label>
 					<label class="eq-band">
 						<span class="band-label">High Mid</span>
-						<span class="band-freq">4kHz</span>
+						<span class="band-freq">6 kHz</span>
 						<input type="range" class="element-eq-highmid" min="-20" max="20" step="1" value="0" orient="vertical" />
 						<span class="band-value">0dB</span>
 					</label>
 					<label class="eq-band">
 						<span class="band-label">Treble</span>
-						<span class="band-freq">8kHz</span>
+						<span class="band-freq">8 kHz</span>
 						<input type="range" class="element-eq-treble" min="-20" max="20" step="1" value="0" orient="vertical" />
 						<span class="band-value">0dB</span>
 					</label>
@@ -87,20 +87,67 @@
 					<input type="checkbox" class="element-flip" />
 				</label>
 			</div>
-			<div class="footer-actions">
-				<div class="site-profile-row" hidden>
-					<label class="site-profile-toggle">
-						<span class="site-profile-label">Remember site</span>
+	</template>
+	<div class="control-card">
+		<div id="all-elements"></div>
+		<footer class="site-footer" hidden>
+			<div class="site-footer-main">
+				<span class="site-hostname" title="Current site"></span>
+				<div class="site-footer-actions">
+					<label class="site-profile-toggle" hidden>
 						<input type="checkbox" class="remember-site" aria-label="Remember settings for this site" />
+						<span class="site-profile-label">Remember</span>
 					</label>
-					<span class="site-profile-status" aria-live="polite"></span>
+					<div class="more-menu-wrap">
+						<button type="button" class="more-menu-button" title="More actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">⋯</button>
+						<div class="more-menu" role="menu" hidden>
+							<div class="menu-main">
+								<button type="button" class="menu-profiles" role="menuitem" aria-haspopup="menu" aria-expanded="false">
+									<span>Profiles</span>
+									<span class="menu-profiles-meta"><span class="active-profile-name">Custom</span><span class="menu-arrow" aria-hidden="true">›</span></span>
+								</button>
+								<div class="menu-separator" role="separator"></div>
+								<button type="button" class="menu-disable-site" role="menuitem">Disable on this site</button>
+								<button type="button" class="menu-copy-diagnostics" role="menuitem">Copy diagnostics</button>
+								<div class="menu-separator" role="separator"></div>
+								<button type="button" class="menu-manage-exceptions" role="menuitem">Manage site exceptions</button>
+							</div>
+							<div class="profile-flyout" role="menu" aria-label="Profiles" hidden>
+								<div class="profile-menu-header">
+									<button type="button" class="menu-back-main" aria-label="Back to site menu">‹ Back</button>
+									<span>Profiles</span>
+								</div>
+								<div class="profile-default" role="group" aria-label="Default profile"></div>
+								<div class="profile-list-shell">
+									<div class="profile-list" role="group" aria-label="Saved profiles for this site"></div>
+									<span class="profile-scroll-hint" hidden>Scroll for more</span>
+								</div>
+								<div class="menu-separator" role="separator"></div>
+								<button type="button" class="menu-new-profile" role="menuitem">Save current…</button>
+								<button type="button" class="menu-manage-profiles" role="menuitem">Manage profiles</button>
+								<form class="profile-name-form" hidden>
+									<div class="profile-form-header">Save profile</div>
+									<label class="profile-name-label" for="profile-name-input">Name</label>
+									<input id="profile-name-input" type="text" class="profile-name-input" maxlength="32" placeholder="e.g. Movies" autocomplete="off">
+									<span class="profile-form-hint">Saved for this site.</span>
+									<span class="profile-form-status" aria-live="polite"></span>
+									<div class="profile-form-actions">
+										<button type="button" class="profile-cancel-button">Cancel</button>
+										<button type="submit" class="profile-save-button">Save</button>
+									</div>
+								</form>
+							</div>
+						</div>
+					</div>
 				</div>
 			</div>
-	</template>
-	<div id="all-elements"></div>
+			<span class="site-profile-status" aria-live="polite"></span>
+		</footer>
+	</div>
   </div>
 
   <script src="popup-state.js"></script>
+	<script src="site-profiles.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

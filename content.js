@@ -11,10 +11,12 @@ const DEFAULT_SETTINGS = Object.freeze({
   eqHighMid: 0,
   eqTreble: 0
 });
+const NEUTRAL_SETTINGS = DEFAULT_SETTINGS;
 const BASIC_MODE_HOSTS = ['tiktok.com'];
 const registeredMediaElements = new WeakSet();
 let frameSettings = { ...DEFAULT_SETTINGS };
 let hasUserSettings = false;
+let frameDisabled = false;
 let initializationPromise = null;
 
 function clamp(value, min, max) {
@@ -49,6 +51,10 @@ function isBasicModeHost(hostname) {
 }
 
 function getMediaCapability(el) {
+	if (frameDisabled) {
+		return { mode: 'disabled', reason: 'site-exception' };
+	}
+
   if (el.xSoundFixerMode === 'passthrough') {
     return { mode: 'unsupported', reason: 'audio-graph-failed' };
   }
@@ -239,6 +245,17 @@ function resumeAudioContext(el) {
   }
 }
 
+function applySettingsToAudioGraph(el, settings) {
+  el.xSoundFixerGain.gain.value = settings.gain;
+  el.xSoundFixerPan.pan.value = settings.pan;
+  el.xSoundFixerEqBass.gain.value = settings.eqBass;
+  el.xSoundFixerEqLowMid.gain.value = settings.eqLowMid;
+  el.xSoundFixerEqMid.gain.value = settings.eqMid;
+  el.xSoundFixerEqHighMid.gain.value = settings.eqHighMid;
+  el.xSoundFixerEqTreble.gain.value = settings.eqTreble;
+  setChannelMode(el, settings);
+}
+
 function applyFullSettings(el, elid, updates) {
   const graphResult = initializeAudioGraph(el, elid);
   if (!graphResult.success) {
@@ -249,16 +266,8 @@ function applyFullSettings(el, elid, updates) {
 
   resumeAudioContext(el);
 
-  el.xSoundFixerGain.gain.value = settings.gain;
-  el.xSoundFixerPan.pan.value = settings.pan;
-  el.xSoundFixerEqBass.gain.value = settings.eqBass;
-  el.xSoundFixerEqLowMid.gain.value = settings.eqLowMid;
-  el.xSoundFixerEqMid.gain.value = settings.eqMid;
-  el.xSoundFixerEqHighMid.gain.value = settings.eqHighMid;
-  el.xSoundFixerEqTreble.gain.value = settings.eqTreble;
-  setChannelMode(el, settings);
-
   el.xSoundFixerSettings = settings;
+  applySettingsToAudioGraph(el, settings);
   return {
     success: true,
     applied: true,
@@ -270,6 +279,17 @@ function applyFullSettings(el, elid, updates) {
 function applySettingsToElement(el, updates) {
   const elid = el.getAttribute('data-x-soundfixer-id');
   const capability = getMediaCapability(el);
+
+	if (capability.mode === 'disabled') {
+		el.xSoundFixerDisabled = true;
+		el.xSoundFixerSettings = mergeSettings(el.xSoundFixerSettings || frameSettings, updates);
+		return {
+			success: true,
+			applied: false,
+			settings: { ...el.xSoundFixerSettings },
+			capability
+		};
+	}
 
   if (capability.mode === 'pending') {
     el.xSoundFixerPendingSettings = mergeSettings(el.xSoundFixerPendingSettings, updates);
@@ -314,6 +334,34 @@ function applySettings(elid, updates, rememberForFrame = true) {
   return applySettingsToElement(el, updates);
 }
 
+function setElementSiteDisabled(el, disabled) {
+	el.xSoundFixerDisabled = disabled === true;
+	const desiredSettings = el.xSoundFixerSettings || { ...frameSettings };
+
+	if (el.xSoundFixerContext && el.xSoundFixerGain) {
+		applySettingsToAudioGraph(el, el.xSoundFixerDisabled ? NEUTRAL_SETTINGS : desiredSettings);
+	} else if (!el.xSoundFixerDisabled) {
+		return applySettingsToElement(el, desiredSettings);
+	}
+
+	return {
+		success: true,
+		applied: Boolean(el.xSoundFixerContext && el.xSoundFixerGain),
+		settings: { ...desiredSettings },
+		capability: getMediaCapability(el)
+	};
+}
+
+function setSiteDisabled(disabled) {
+	frameDisabled = disabled === true;
+	const media = [];
+	for (const el of document.querySelectorAll('video, audio')) {
+		registerMediaElement(el);
+		media.push(setElementSiteDisabled(el, frameDisabled));
+	}
+	return { success: true, disabled: frameDisabled, media };
+}
+
 function assignMediaId(el) {
   if (!el.hasAttribute('data-x-soundfixer-id')) {
     el.setAttribute('data-x-soundfixer-id', Math.random().toString(36).slice(2, 12));
@@ -332,6 +380,7 @@ function scheduleSettingsRestore(el) {
 
 function registerMediaElement(el) {
   assignMediaId(el);
+	el.xSoundFixerDisabled = frameDisabled;
   if (registeredMediaElements.has(el)) return;
   registeredMediaElements.add(el);
 
@@ -344,7 +393,7 @@ function registerMediaElement(el) {
   el.addEventListener('playing', () => resumeAudioContext(el));
   el.addEventListener('volumechange', () => resumeAudioContext(el));
 
-  if (hasUserSettings) {
+  if (hasUserSettings && !frameDisabled) {
     applySettingsToElement(el, frameSettings);
   }
 }
@@ -360,7 +409,8 @@ function getMediaState(el) {
     type: el.tagName.toLowerCase(),
     isPlaying: el.currentTime > 0 && !el.paused && !el.ended && el.readyState > 2,
     settings: { ...settings },
-    capability
+    capability,
+		siteDisabled: frameDisabled
   };
 }
 
@@ -387,6 +437,16 @@ async function loadRememberedSiteProfile() {
   }
 }
 
+async function loadSiteExceptionStatus() {
+	try {
+		const result = await browser.runtime.sendMessage({ action: 'getSiteExceptionStatus' });
+		frameDisabled = result?.disabled === true;
+	} catch (error) {
+		console.warn('Unable to load the site exception status:', error);
+		frameDisabled = false;
+	}
+}
+
 async function handleMessage(message) {
   try {
     if (initializationPromise) await initializationPromise;
@@ -402,6 +462,9 @@ async function handleMessage(message) {
 
       case 'applySettings':
         return applySettings(message.elid, message.settings);
+
+		case 'setSiteDisabled':
+			return setSiteDisabled(message.disabled);
 
       case 'getStatus': {
         const mediaMap = scanMediaElements();
@@ -455,7 +518,10 @@ function registerMediaFromNode(node) {
 }
 
 async function initialize() {
-  await loadRememberedSiteProfile();
+	await Promise.all([
+		loadRememberedSiteProfile(),
+		loadSiteExceptionStatus()
+	]);
   scanMediaElements();
 
   const observer = new MutationObserver(mutations => {
