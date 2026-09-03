@@ -5,6 +5,10 @@ Sound Adjuster is a Firefox extension for changing the volume, stereo balance, a
 [![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-blue?logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/tropicaddons)
 
+[Website and interactive demo](https://sound-adjuster.github.io/) · [Listening guides](https://sound-adjuster.github.io/guides.html)
+
+The demo lets you try the controls before installing. It processes a sample in your browser; its settings are separate from the extension.
+
 ## Features
 
 - Volume gain from 0× to 5×
