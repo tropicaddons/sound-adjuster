@@ -37,30 +37,6 @@ Choose **Disable on this site** from the footer menu to add the current hostname
 
 **Copy diagnostics** copies the extension version, hostname, capability summary, media count, current settings, and browser information. It does not include the page path or media source URLs.
 
-## Changelog
-
-### 2.4.1
-
-Changes since 2.4.0:
-
-- Added site-specific named profiles for complete gain, balance, channel, and equalizer setups, with quick switching and profile management from the popup.
-- Added a persistent per-site disable list and a separate exceptions page for restoring access later.
-- Added a local diagnostics copy action that leaves out page paths and media source URLs.
-- Reworked the footer with the active hostname, **Remember** control, and a right-aligned menu that stays within the existing popup dimensions.
-- Added mouse-wheel adjustment to the Gain and Pan rows and each equalizer band while preserving their existing limits and precision.
-- Simplified the Gain value field and corrected the displayed equalizer frequencies to match the filters used by the audio engine.
-- Improved restricted-media messages so CORS, protected playback, and site limitations are easier to identify while original playback remains unchanged.
-
-### 2.4.0
-
-Changes since 2.3.2:
-
-- Added opt-in per-site profiles for gain, pan, mono, channel flip, and all equalizer bands.
-- Restored remembered settings before the first media scan and applied them to media added later on dynamic feed pages.
-- Improved autoplay-feed reliability by resuming suspended audio processing when media is unmuted or begins playing.
-- Refined the popup with a compact profile switch, a familiar Reset action in the **All media** header, and immediate Equalizer collapse without leftover popup space.
-- Added Firefox Manifest V3 background storage handling while keeping private windows and non-HTTP(S) pages outside profile storage.
-
 ## Install from source
 
 1. Download or clone this repository.

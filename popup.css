@@ -35,7 +35,6 @@
 html,
 body {
 	margin: 0;
-	width: 360px;
 	min-height: 0;
 	background: var(--app-bg);
 	color: var(--text);
@@ -44,10 +43,27 @@ body {
 	line-height: 1.4;
 }
 
+html {
+	overflow: hidden;
+}
+
 body {
+	width: 360px;
+	max-width: 100%;
+	user-select: none;
+}
+
+#popup-scrollport {
+	/* Content keeps its natural height while this viewport is constrained. */
+	max-height: var(--popup-max-height, 600px);
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+#popup-content {
 	position: relative;
 	padding: 16px;
-	user-select: none;
 }
 
 button,
@@ -60,7 +76,7 @@ button {
 }
 
 #elements-pane {
-	width: 328px;
+	width: 100%;
 }
 
 header {
@@ -297,7 +313,10 @@ input:focus-visible {
 	z-index: 10;
 	display: block;
 	width: 190px;
-	overflow: visible;
+	max-height: max(0px, calc(var(--popup-max-height, 600px) - 64px));
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 	padding: 5px;
 	border: 1px solid var(--border);
 	border-radius: 8px;
@@ -365,7 +384,7 @@ input:focus-visible {
 .profile-flyout {
 	position: static;
 	display: flex;
-	max-height: min(258px, calc(100vh - 64px));
+	max-height: 258px;
 	width: 100%;
 	min-width: 0;
 	flex-direction: column;
@@ -491,7 +510,7 @@ input:focus-visible {
 	inset: 1px;
 	z-index: 2;
 	display: flex;
-	min-height: 0;
+	min-height: 174px;
 	flex-direction: column;
 	margin: 0;
 	padding: 10px;

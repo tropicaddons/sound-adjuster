@@ -1,5 +1,54 @@
 'use strict';
 
+const popupScrollport = document.getElementById('popup-scrollport');
+const popupContent = document.getElementById('popup-content');
+let popupLayoutFrame = 0;
+
+function updatePopupHeightLimit() {
+	popupLayoutFrame = 0;
+	// Firefox can clip the native panel without reducing window.innerHeight.
+	// These screen coordinates share CSS-pixel units, including display scaling.
+	const popupTop = window.mozInnerScreenY;
+	const screenBottom = window.screen.availTop + window.screen.availHeight;
+	const browserBottom = window.screenY + window.outerHeight;
+	if (!Number.isFinite(popupTop) || !Number.isFinite(screenBottom)
+		|| !Number.isFinite(browserBottom)) return;
+	// Only a small border/rounding inset is needed; browser chrome is measured.
+	const availableHeight = Math.min(screenBottom, browserBottom) - popupTop - 8;
+	const value = `${Math.max(0, Math.floor(Math.min(600, availableHeight)))}px`;
+	if (document.documentElement.style.getPropertyValue('--popup-max-height') !== value) {
+		document.documentElement.style.setProperty('--popup-max-height', value);
+	}
+}
+
+function schedulePopupLayout() {
+	if (!popupLayoutFrame) popupLayoutFrame = requestAnimationFrame(updatePopupHeightLimit);
+}
+
+updatePopupHeightLimit();
+window.addEventListener('resize', schedulePopupLayout);
+const popupContentObserver = new ResizeObserver(schedulePopupLayout);
+popupContentObserver.observe(popupContent);
+// Moving/resizing the host window need not resize the popup's content viewport.
+const popupGeometryTimer = setInterval(schedulePopupLayout, 150);
+window.addEventListener('unload', () => {
+	clearInterval(popupGeometryTimer);
+	cancelAnimationFrame(popupLayoutFrame);
+	popupContentObserver.disconnect();
+});
+
+// In a short popup, wheel gestures over the audio controls must still scroll.
+popupScrollport.addEventListener('wheel', event => {
+	if (popupScrollport.scrollHeight <= popupScrollport.clientHeight + 1
+		|| !event.target.closest('.gain-control, .pan-control, .eq-band')
+		|| event.ctrlKey || event.deltaY === 0) return;
+	event.preventDefault();
+	event.stopPropagation();
+	const unit = event.deltaMode === 1 ? 16
+		: event.deltaMode === 2 ? popupScrollport.clientHeight : 1;
+	popupScrollport.scrollTop += event.deltaY * unit;
+}, { capture: true, passive: false });
+
 let tid = 0;
 let activeTab = null;
 let siteProfileStatus = { eligible: false, remembered: false, profile: null };
@@ -213,6 +262,7 @@ function showProfileNameForm() {
 	newProfileButton.hidden = true;
 	profileNameForm.hidden = false;
 	profileFlyout.classList.add('profile-form-open');
+	moreMenu.scrollTop = 0;
 	profileNameInput.focus();
 }
 
@@ -238,6 +288,7 @@ function setProfileFlyoutOpen(open, restoreFocus = false) {
 	}
 	profileFlyout.hidden = !isOpen;
 	menuMain.hidden = isOpen;
+	moreMenu.scrollTop = 0;
 	profilesMenuButton.setAttribute('aria-expanded', String(isOpen));
 	if (!isOpen) hideProfileNameForm();
 	if (!isOpen && restoreFocus) profilesMenuButton.focus();

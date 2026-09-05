@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sound Adjuster",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Control volume gain, stereo balance, equalizer, and optional per-site audio settings in Firefox tabs.",
   "permissions": [
     "activeTab",
