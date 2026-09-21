@@ -165,8 +165,32 @@ async function loadNamedProfilesStatus() {
 }
 
 // Theme Management
+function getPopupStorage() {
+	try {
+		return globalThis.localStorage || null;
+	} catch (error) {
+		return null;
+	}
+}
+
+function readPopupPreference(key) {
+	try {
+		return getPopupStorage()?.getItem(key) || null;
+	} catch (error) {
+		return null;
+	}
+}
+
+function savePopupPreference(key, value) {
+	try {
+		getPopupStorage()?.setItem(key, value);
+	} catch (error) {
+		// Storage can be disabled in Firefox; the popup still works for this session.
+	}
+}
+
 function initializeTheme() {
-	const savedTheme = localStorage.getItem('soundAdjusterTheme') || 'dark';
+	const savedTheme = readPopupPreference('soundAdjusterTheme') || 'dark';
 	document.body.classList.toggle('light-theme', savedTheme === 'light');
 	updateThemeToggleIcon();
 }
@@ -181,7 +205,7 @@ function updateThemeToggleIcon() {
 function toggleTheme() {
 	document.body.classList.toggle('light-theme');
 	const isLightTheme = document.body.classList.contains('light-theme');
-	localStorage.setItem('soundAdjusterTheme', isLightTheme ? 'light' : 'dark');
+	savePopupPreference('soundAdjusterTheme', isLightTheme ? 'light' : 'dark');
 	updateThemeToggleIcon();
 }
 
@@ -1023,12 +1047,12 @@ function renderFrameResults(frameResults) {
 			const eqSection = node.querySelector('.equalizer-section');
 
 			if (eqToggle && eqSection) {
-				restoreEqualizerExpanded(node, localStorage);
+				restoreEqualizerExpanded(node, getPopupStorage());
 				eqToggle.addEventListener('click', function () {
 					const expanded = setEqualizerExpanded(
 						node,
 						eqSection.classList.contains('collapsed'),
-						localStorage
+						getPopupStorage()
 					);
 				});
 			}
