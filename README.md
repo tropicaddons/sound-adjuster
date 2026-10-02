@@ -1,6 +1,6 @@
 # Sound Adjuster
 
-Sound Adjuster is a privacy-friendly, open-source Firefox extension for boosting and shaping tab audio with up to 5× gain, stereo balance, a five-band equalizer, and local profiles.
+Sound Adjuster is a privacy-friendly, open-source Firefox extension for boosting and shaping tab audio with up to 5× gain, stereo balance, and a five-band equalizer. Save your preferred settings for individual sites or as global defaults, and adjust audio without opening the popup using keyboard shortcuts.
 
 [![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-blue?logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/tropicaddons)
@@ -17,15 +17,42 @@ The demo lets you try the controls before installing. It processes a sample in y
 - Five-band equalizer with presets
 - Mono and channel-flip controls
 - Optional per-site profiles that restore settings after page reloads
-- Optional global defaults for supported sites
+- Optional global defaults for gain, balance, equalizer, mono, and channel flip
 - Multiple named profiles for each site, with instant switching from the popup
 - Per-site disable list with a dedicated exceptions manager
 - One-click local diagnostics copy without media URLs
-- Light and dark themes
+- Light and dark themes shared by the popup and settings page
 - Automatic detection of media added after the page loads
 - Reliable audio recovery when an autoplay feed video is unmuted
 - Keyboard shortcuts for gain, reset, and mono controls
 - Toolbar badge for the active gain, mono, balance, or disabled state
+
+## Settings
+
+Open the popup's footer menu (**…**) and choose **Settings and exceptions**. The settings page brings together default audio settings, keyboard shortcuts, appearance preferences, and your disabled-site list.
+
+Under **Default audio settings**, enable global defaults, choose your gain, stereo balance, equalizer preset, mono, and channel flip, then select **Save defaults**. These become the starting settings on supported sites without a remembered site profile. A remembered site profile takes priority; global defaults are not read in private windows.
+
+**Reset** and the reset shortcut return to your enabled global defaults, including every equalizer band. With global defaults off (or in a private window), they restore 1× gain, centered balance, Flat EQ, and mono/channel flip off. If **Remember** is on, the reset settings also replace that site's remembered settings.
+
+The settings page follows the light or dark theme selected in the popup. Under **Appearance**, turn off **Show support button** to hide the support heart permanently. The preference stays on your device, and the GitHub link remains available.
+
+## Keyboard shortcuts
+
+Control the active tab without opening the popup:
+
+| Action | Default shortcut |
+| --- | --- |
+| Increase gain | `Alt+Up` |
+| Decrease gain | `Alt+Down` |
+| Reset audio | `Alt+Shift+0` |
+| Toggle mono | `Alt+Shift+M` |
+
+The **Keyboard shortcuts** section in Settings shows your currently assigned keys. Choose **Edit shortcuts** to open Firefox's extension shortcut settings and change them. Shortcut changes to the audio also update the popup while it is open and the toolbar badge.
+
+## Gain and level feedback
+
+The gain range is 0×–5×. The compact level indicator beside the gain value warns when the audio approaches clipping. Increasing gain can cause distortion; it does not restore detail missing from a quiet or distorted recording.
 
 ## Site profiles
 
@@ -37,21 +64,9 @@ Open the footer menu and choose **Profiles** to save or switch complete audio se
 
 ## Site exceptions and diagnostics
 
-Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately; after the tab reloads, Sound Adjuster skips creating an audio graph on that site. **Settings and exceptions** opens a separate page where global defaults, shortcuts, and disabled sites can be managed.
+Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately; after the tab reloads, Sound Adjuster skips creating an audio graph on that site. Manage or remove disabled sites from **Settings and exceptions**.
 
 **Copy diagnostics** copies the extension version, hostname, capability summary, media count, current settings, and browser information. It does not include the page path or media source URLs.
-
-## Gain, defaults, and shortcuts
-
-The gain range is 0×–5×. The compact level indicator beside the gain value warns when the source approaches clipping. Gain cannot restore detail that is missing from a quiet or distorted recording.
-
-The settings page can apply an optional global starting point for gain, balance, an equalizer preset, mono, and channel flip. A remembered site profile always takes priority over the global default. Global defaults are not read in private windows.
-
-**Reset** and the reset shortcut restore enabled global defaults, including every equalizer band. With global defaults off (or in a private window), they restore 1× gain, centered balance, Flat EQ, and mono/channel flip off. If **Remember** is on, the reset settings also replace that site's remembered settings.
-
-The default shortcuts are `Alt+Up` and `Alt+Down` for gain, `Alt+Shift+0` for reset, and `Alt+Shift+M` for mono. They can be changed from Firefox’s extension shortcut settings.
-
-The support heart can be hidden permanently from **Settings → Appearance → Show support button**. This preference is stored locally; the GitHub link remains available.
 
 ## Install from source
 
