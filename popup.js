@@ -89,6 +89,7 @@ const manageExceptionsButton = document.querySelector('.menu-manage-exceptions')
 let noMediaStateVisible = false;
 let autoMediaScanTimer = null;
 let autoMediaScanInFlight = false;
+let levelMeterTimer = null;
 let profileOperationQueue = Promise.resolve();
 let profileFeedbackSequence = 0;
 let footerFeedbackTimer = null;
@@ -720,6 +721,7 @@ function createEmptyState(titleText, descriptionText, includeReloadButton = true
 }
 
 function showNoMediaState() {
+	stopLevelMonitoring();
 	currentControlsNode = null;
 	noMediaStateVisible = true;
 	allElements.innerHTML = '';
@@ -733,6 +735,7 @@ function showNoMediaState() {
 }
 
 function showUnavailableMediaState(capability) {
+	stopLevelMonitoring();
 	const descriptions = {
 		'site-restricted': 'This site prevents Sound Adjuster from safely accessing its audio. Playback continues normally.',
 		'cross-origin-media': 'Firefox blocks the audio access needed for this media source. Playback continues normally.',
@@ -754,6 +757,7 @@ function showUnavailableMediaState(capability) {
 }
 
 function showSiteDisabledState() {
+	stopLevelMonitoring();
 	currentControlsNode = null;
 	noMediaStateVisible = false;
 	stopAutoMediaScan();
@@ -787,6 +791,44 @@ function applySettings(fid, elid, newSettings) {
 	});
 }
 
+function stopLevelMonitoring() {
+	clearTimeout(levelMeterTimer);
+	levelMeterTimer = null;
+}
+
+function startLevelMonitoring(node) {
+	stopLevelMonitoring();
+	const indicator = node?.querySelector('.level-indicator');
+	if (!indicator || !referenceMediaKey) return;
+
+	const separator = referenceMediaKey.indexOf(':');
+	const fid = Number.parseInt(referenceMediaKey.slice(0, separator), 10);
+	const elid = referenceMediaKey.slice(separator + 1);
+
+	const refresh = async () => {
+		try {
+			const result = await browser.tabs.sendMessage(tid, {
+				action: 'getAudioLevel',
+				elid
+			}, { frameId: fid });
+			const peak = Number.isFinite(result?.peak) ? result.peak : 0;
+			const state = result?.clipping ? 'clipping' : peak >= 0.8 ? 'high' : 'normal';
+			const label = state === 'clipping' ? 'Clipping risk'
+					: state === 'high' ? 'Output level high' : 'Output level normal';
+			indicator.dataset.state = state;
+			indicator.setAttribute('aria-label', label);
+			indicator.title = label;
+		} catch (error) {
+			indicator.dataset.state = 'unavailable';
+			indicator.setAttribute('aria-label', 'Output level unavailable');
+			indicator.title = 'Output level unavailable';
+		}
+		if (currentControlsNode === node) levelMeterTimer = setTimeout(refresh, 160);
+	};
+
+	refresh();
+}
+
 function scanMedia() {
 	return browser.webNavigation.getAllFrames({ tabId: tid }).then(frames => {
 		return Promise.all(frames.map(frame =>
@@ -802,6 +844,21 @@ function scanMedia() {
 			})
 		));
 	});
+}
+
+function syncControlsFromShortcut(settings) {
+	if (!currentControlsNode) return;
+	const restored = applySettingsToControls(currentControlsNode, settings, equalizerPresets);
+	const gain = currentControlsNode.querySelector('.element-gain');
+	const gainNumber = currentControlsNode.querySelector('.element-gain-num');
+	if (gainNumber) gainNumber.max = '5';
+
+	for (const mediaMap of frameMap.values()) {
+		for (const media of mediaMap.values()) media.settings = { ...restored.settings };
+	}
+
+	if (gain) gain.value = String(restored.settings.gain);
+	renderNamedProfiles();
 }
 
 function countScannedMedia(frameResults) {
@@ -899,9 +956,10 @@ function renderFrameResults(frameResults) {
 			gain.style.width = '100%';
 			function applyGain (value, formatNumber = true) {
 				value = Math.max(0, Math.min(5, Number.parseFloat(value) || 0));
+				const boostSettings = { gain: value };
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
-						applySettings(fid, elid, { gain: value });
+						applySettings(fid, elid, boostSettings);
 						const egain = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-gain`);
 						if (egain) {
 							egain.value = value;
@@ -927,7 +985,6 @@ function renderFrameResults(frameResults) {
 				applyGain(this.value, false);
 			});
 			gainNumberInput.addEventListener('change', () => applyGain(gainNumberInput.value, true));
-
 			const pan = node.querySelector('.element-pan');
 			const panNumberInput = node.querySelector('.element-pan-num');
 			pan.style.display = 'inline-block';
@@ -1111,6 +1168,7 @@ function renderFrameResults(frameResults) {
 					equalizerPresets
 				);
 				activePreset = resetUiState.presetName;
+				syncBoostUi();
 
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
@@ -1128,10 +1186,7 @@ function renderFrameResults(frameResults) {
 						if (emono) emono.checked = false;
 						const eflip = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-flip`);
 						if (eflip) eflip.checked = false;
-						applySettings(fid, elid, {
-							gain: 1, pan: 0, mono: false, flip: false,
-							eqBass: 0, eqLowMid: 0, eqMid: 0, eqHighMid: 0, eqTreble: 0
-						});
+						applySettings(fid, elid, { ...POPUP_DEFAULT_SETTINGS });
 					}
 				}
 				renderNamedProfiles();
@@ -1140,7 +1195,8 @@ function renderFrameResults(frameResults) {
 
 			node.querySelectorAll([
 				'.element-gain', '.element-gain-num', '.element-pan', '.element-pan-num',
-				'.element-mono', '.element-flip', '.element-eq-bass', '.element-eq-lowmid',
+				'.element-mono', '.element-flip',
+				'.element-eq-bass', '.element-eq-lowmid',
 				'.element-eq-mid', '.element-eq-highmid', '.element-eq-treble'
 			].join(',')).forEach(control => {
 				control.addEventListener('input', () => renderNamedProfiles());
@@ -1153,12 +1209,17 @@ function renderFrameResults(frameResults) {
 			allElements.classList.remove('is-empty');
 			allElements.appendChild(node);
 			currentControlsNode = node;
+			startLevelMonitoring(node);
 			renderNamedProfiles();
 			updateSiteFooter();
 		}
 	}
 
 browser.runtime.onMessage.addListener((message, sender) => {
+	if (message?.action === 'shortcutApplied') {
+		if (message.tabId === tid) syncControlsFromShortcut(message.settings);
+		return undefined;
+	}
 	if (message?.action !== 'mediaElementsChanged' || !noMediaStateVisible) return undefined;
 	if (sender.tab?.id !== tid) return undefined;
 
@@ -1168,6 +1229,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
 });
 
 window.addEventListener('unload', stopAutoMediaScan);
+window.addEventListener('unload', stopLevelMonitoring);
 window.addEventListener('unload', () => {
 	clearTimeout(footerFeedbackTimer);
 });

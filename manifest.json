@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Sound Adjuster",
-  "version": "2.4.3",
-  "description": "Control volume gain, stereo balance, equalizer, and optional per-site audio settings in Firefox tabs.",
+  "version": "2.5.0",
+  "description": "Boost and shape Firefox tab audio with up to 5× gain, stereo balance, a five-band EQ, local profiles, and shortcuts.",
   "permissions": [
     "activeTab",
     "tabs",
@@ -27,7 +27,7 @@
     }
   ],
   "background": {
-    "scripts": ["popup-state.js", "site-profiles.js", "site-exceptions.js", "named-profiles.js", "background.js"]
+    "scripts": ["popup-state.js", "site-profiles.js", "site-exceptions.js", "named-profiles.js", "global-settings.js", "background.js"]
   },
   "options_ui": {
     "page": "options.html",
@@ -40,6 +40,24 @@
       "16": "icon.svg",
       "48": "icon.svg",
       "128": "icon.svg"
+    }
+  },
+  "commands": {
+    "increase-gain": {
+      "suggested_key": { "default": "Alt+Up" },
+      "description": "Increase Sound Adjuster gain"
+    },
+    "decrease-gain": {
+      "suggested_key": { "default": "Alt+Down" },
+      "description": "Decrease Sound Adjuster gain"
+    },
+    "reset-audio": {
+      "suggested_key": { "default": "Alt+Shift+0" },
+      "description": "Reset Sound Adjuster settings"
+    },
+    "toggle-mono": {
+      "suggested_key": { "default": "Alt+Shift+M" },
+      "description": "Toggle mono audio"
     }
   },
   "browser_specific_settings": {

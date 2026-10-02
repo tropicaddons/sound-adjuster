@@ -11,6 +11,11 @@
 	--accent-soft: rgba(255, 107, 53, 0.14);
 	--focus: rgba(255, 107, 53, 0.28);
 	--danger: #ff7b72;
+	--danger-soft: rgba(255, 123, 114, 0.1);
+	--level-ok: #56c888;
+	--support: #ffd15c;
+	--support-soft: rgba(255, 209, 92, 0.1);
+	--support-glow: rgba(255, 209, 92, 0.24);
 }
 
 .light-theme {
@@ -26,6 +31,11 @@
 	--accent-soft: rgba(59, 130, 246, 0.12);
 	--focus: rgba(59, 130, 246, 0.24);
 	--danger: #c93737;
+	--danger-soft: rgba(201, 55, 55, 0.08);
+	--level-ok: #278a55;
+	--support: #8b6100;
+	--support-soft: rgba(139, 97, 0, 0.08);
+	--support-glow: rgba(185, 128, 0, 0.2);
 }
 
 * {
@@ -93,6 +103,74 @@ header h1 {
 	letter-spacing: -0.02em;
 }
 
+.support-button,
+.github-button {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	align-items: center;
+	margin-left: 10px;
+	padding: 5px;
+	border: 1px solid transparent;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--muted);
+	text-decoration: none;
+	transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+
+.github-button {
+	margin-left: 4px;
+}
+
+.support-button svg {
+	width: 17px;
+	height: 17px;
+	fill: transparent;
+	stroke: currentColor;
+	stroke-width: 1.7;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	transition: fill 140ms ease, stroke 140ms ease;
+}
+
+.support-button:hover,
+.support-button:focus-visible {
+	border-color: var(--support);
+	background: var(--support-soft);
+	box-shadow: 0 0 0 2px var(--support-soft), 0 0 12px var(--support-glow);
+	color: var(--support);
+}
+
+.support-button:hover svg,
+.support-button:focus-visible svg {
+	fill: var(--support);
+}
+
+.support-button:focus-visible {
+	outline: 3px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.github-button svg {
+	width: 17px;
+	height: 17px;
+	fill: currentColor;
+}
+
+.github-button:hover,
+.github-button:focus-visible {
+	border-color: var(--border);
+	background: var(--surface-raised);
+	color: var(--text);
+}
+
+.github-button:focus-visible {
+	outline: 3px solid var(--focus);
+	outline-offset: 2px;
+}
+
 #theme-toggle {
 	position: absolute;
 	top: 15px;
@@ -134,20 +212,6 @@ input:focus-visible {
 	padding: 14px;
 }
 
-.header-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	min-height: 30px;
-	margin-bottom: 12px;
-}
-
-.element-label {
-	color: var(--text);
-	font-size: 13px;
-	font-weight: 650;
-}
-
 .element-reset,
 .preset-btn,
 .reload-button {
@@ -159,11 +223,12 @@ input:focus-visible {
 
 .element-reset {
 	flex: 0 0 auto;
-	height: 30px;
+	height: 28px;
 	padding: 0 12px;
 	border-radius: 6px;
-	background: var(--control-bg);
-	color: var(--muted);
+	border-color: transparent;
+	background: var(--danger-soft);
+	color: var(--danger);
 	font-size: 11px;
 }
 
@@ -175,8 +240,9 @@ input:focus-visible {
 }
 
 .element-reset:hover {
-	border-color: var(--accent);
-	background: var(--surface-raised);
+	border-color: var(--danger);
+	background: var(--danger-soft);
+	color: var(--danger);
 }
 
 .site-footer {
@@ -265,14 +331,6 @@ input:focus-visible {
 .site-profile-status[data-state="info"] {
 	display: block;
 	color: var(--muted);
-}
-
-.site-profile-toggle input {
-	width: 14px;
-	height: 14px;
-	margin: 0;
-	accent-color: var(--accent);
-	cursor: pointer;
 }
 
 .site-profile-toggle input:disabled {
@@ -588,7 +646,7 @@ input:disabled {
 
 #all-elements > div > label:not(.eq-band) {
 	display: grid;
-	grid-template-columns: 48px minmax(0, 1fr) 66px;
+	grid-template-columns: 48px minmax(0, 1fr) 74px;
 	align-items: center;
 	gap: 12px;
 	margin: 0 0 14px;
@@ -681,8 +739,53 @@ input[type="number"]:focus {
 	border-color: var(--accent);
 }
 
+.gain-value {
+	display: flex;
+	align-items: center;
+	justify-self: end;
+	gap: 7px;
+}
+
+.level-indicator {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	flex: 0 0 10px;
+	border: 1px solid var(--level-ok);
+	border-radius: 50%;
+	background: var(--level-ok);
+	opacity: 1;
+	transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.level-indicator[data-state="unavailable"] {
+	border-color: var(--border);
+	background: var(--muted);
+	opacity: 0.45;
+}
+
+.level-indicator[data-state="high"] {
+	border-color: #e6a23c;
+	background: #e6a23c;
+	opacity: 1;
+}
+
+.level-indicator[data-state="clipping"] {
+	border-color: var(--danger);
+	background: var(--danger);
+	opacity: 1;
+}
+
+.control-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin: -2px 0 12px;
+}
+
 .equalizer-section {
-	margin-top: 4px;
+	margin-top: 0;
 	padding-top: 14px;
 	border-top: 1px solid var(--border);
 }
@@ -825,19 +928,18 @@ input[type="number"]:focus {
 .checkboxes {
 	display: flex;
 	align-items: center;
-	gap: 22px;
-	margin-top: 12px;
+	gap: 18px;
+	margin: 0;
 }
 
 .checkboxes label {
 	display: flex;
-	flex-direction: row-reverse;
 	align-items: center;
-	justify-content: flex-end;
+	justify-content: flex-start;
 	gap: 8px;
 	margin: 0;
 	color: var(--muted);
-	font-size: 13px;
+	font-size: 12px;
 	cursor: pointer;
 }
 
@@ -845,12 +947,63 @@ input[type="number"]:focus {
 	min-width: 0;
 }
 
-.checkboxes input[type="checkbox"] {
-	width: 15px;
-	height: 15px;
+.checkboxes input[type="checkbox"],
+.site-profile-toggle input[type="checkbox"] {
+	position: absolute;
+	width: 1px;
+	height: 1px;
 	margin: 0;
-	accent-color: var(--accent);
-	cursor: pointer;
+	overflow: hidden;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.checkboxes input[type="checkbox"]:focus-visible,
+.site-profile-toggle input[type="checkbox"]:focus-visible {
+	outline: none;
+}
+
+.switch-control {
+	position: relative;
+	display: inline-block;
+	width: 26px;
+	height: 14px;
+	flex: 0 0 26px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--track);
+	transition: border-color 120ms ease, background 120ms ease;
+}
+
+.switch-control::after {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--muted);
+	content: "";
+	transition: transform 120ms ease, background 120ms ease;
+}
+
+input[type="checkbox"]:checked + .switch-control {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+input[type="checkbox"]:checked + .switch-control::after {
+	background: var(--accent);
+	transform: translateX(12px);
+}
+
+input[type="checkbox"]:focus-visible + .switch-control {
+	outline: 3px solid var(--focus);
+	outline-offset: 2px;
+}
+
+input[type="checkbox"]:disabled + .switch-control {
+	opacity: 0.55;
 }
 
 #all-elements.is-empty {

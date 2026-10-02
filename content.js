@@ -25,8 +25,9 @@ function clamp(value, min, max) {
 
 function mergeSettings(baseSettings, updates) {
   const merged = { ...DEFAULT_SETTINGS, ...baseSettings };
+  delete merged.extraBoost;
+  delete merged.limiter;
   const ranges = {
-    gain: [0, 5],
     pan: [-1, 1],
     eqBass: [-20, 20],
     eqLowMid: [-20, 20],
@@ -34,6 +35,9 @@ function mergeSettings(baseSettings, updates) {
     eqHighMid: [-20, 20],
     eqTreble: [-20, 20]
   };
+
+  const gain = Number.parseFloat('gain' in updates ? updates.gain : merged.gain);
+  merged.gain = Number.isFinite(gain) ? clamp(gain, 0, 5) : DEFAULT_SETTINGS.gain;
 
   for (const [key, range] of Object.entries(ranges)) {
     if (!(key in updates)) continue;
@@ -112,6 +116,7 @@ function initializeAudioGraph(el, elid) {
   try {
     context = new AudioContextClass();
     const gain = context.createGain();
+    const analyser = context.createAnalyser();
     const pan = context.createStereoPanner();
     const split = context.createChannelSplitter(2);
     const merge = context.createChannelMerger(2);
@@ -139,6 +144,9 @@ function initializeAudioGraph(el, elid) {
     eqTreble.type = 'highshelf';
     eqTreble.frequency.value = 8000;
 
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.65;
+
     // Create the source last so failures before this point cannot reroute audio.
     source = context.createMediaElementSource(el);
     source.connect(eqBass);
@@ -147,12 +155,14 @@ function initializeAudioGraph(el, elid) {
     eqMid.connect(eqHighMid);
     eqHighMid.connect(eqTreble);
     eqTreble.connect(gain);
-    gain.connect(pan);
+    gain.connect(analyser);
+    analyser.connect(pan);
     pan.connect(context.destination);
 
     el.xSoundFixerContext = context;
     el.xSoundFixerSource = source;
     el.xSoundFixerGain = gain;
+    el.xSoundFixerAnalyser = analyser;
     el.xSoundFixerPan = pan;
     el.xSoundFixerSplit = split;
     el.xSoundFixerMerge = merge;
@@ -245,6 +255,41 @@ function resumeAudioContext(el) {
   }
 }
 
+function notifyBadge(settings = frameSettings, disabled = frameDisabled) {
+  browser.runtime.sendMessage({
+    action: 'updateBadge',
+    settings: { ...settings },
+    disabled: disabled === true
+  }).catch(() => {
+    // The background may be restarting; the next change will refresh the badge.
+  });
+}
+
+function getAudioLevel(el) {
+  const analyser = el?.xSoundFixerAnalyser;
+  const context = el?.xSoundFixerContext;
+  if (!analyser || !context || context.state !== 'running') {
+    return { peak: 0, clipping: false, contextState: context?.state || 'unavailable' };
+  }
+
+  let peak = 0;
+  if (typeof analyser.getFloatTimeDomainData === 'function') {
+    const samples = new Float32Array(analyser.fftSize || 256);
+    analyser.getFloatTimeDomainData(samples);
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+  } else if (typeof analyser.getByteTimeDomainData === 'function') {
+    const samples = new Uint8Array(analyser.fftSize || 256);
+    analyser.getByteTimeDomainData(samples);
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample - 128) / 128);
+  }
+
+  return {
+    peak: Number(Math.min(2, peak).toFixed(4)),
+    clipping: peak >= 0.98,
+    contextState: context.state
+  };
+}
+
 function applySettingsToAudioGraph(el, settings) {
   el.xSoundFixerGain.gain.value = settings.gain;
   el.xSoundFixerPan.pan.value = settings.pan;
@@ -329,6 +374,7 @@ function applySettings(elid, updates, rememberForFrame = true) {
   if (rememberForFrame) {
     frameSettings = mergeSettings(frameSettings, updates);
     hasUserSettings = true;
+    notifyBadge(frameSettings);
   }
 
   return applySettingsToElement(el, updates);
@@ -359,7 +405,38 @@ function setSiteDisabled(disabled) {
 		registerMediaElement(el);
 		media.push(setElementSiteDisabled(el, frameDisabled));
 	}
+	notifyBadge(frameSettings, frameDisabled);
 	return { success: true, disabled: frameDisabled, media };
+}
+
+function applyShortcut(command) {
+  const elements = [...document.querySelectorAll('video, audio')];
+  if (frameDisabled || elements.length === 0) {
+    return { success: false, applied: false, disabled: frameDisabled };
+  }
+
+  elements.forEach(registerMediaElement);
+  const reference = elements.find(el => el.currentTime > 0 && !el.paused && !el.ended) || elements[0];
+  const current = mergeSettings(frameSettings, reference.xSoundFixerSettings || {});
+  let next = { ...current };
+
+  if (command === 'increase-gain') {
+    next.gain = clamp(Number((current.gain + 0.25).toFixed(2)), 0, 5);
+  } else if (command === 'decrease-gain') {
+    next.gain = clamp(Number((current.gain - 0.25).toFixed(2)), 0, 5);
+  } else if (command === 'toggle-mono') {
+    next.mono = !current.mono;
+  } else if (command === 'reset-audio') {
+    next = { ...DEFAULT_SETTINGS };
+  } else {
+    return { success: false, applied: false, error: `Unknown command: ${command}` };
+  }
+
+  frameSettings = mergeSettings(DEFAULT_SETTINGS, next);
+  hasUserSettings = true;
+  const media = elements.map(el => applySettingsToElement(el, frameSettings));
+  notifyBadge(frameSettings);
+  return { success: true, applied: media.some(result => result?.applied), settings: { ...frameSettings } };
 }
 
 function assignMediaId(el) {
@@ -425,15 +502,24 @@ function scanMediaElements() {
   return result;
 }
 
-async function loadRememberedSiteProfile() {
+async function loadInitialSettings() {
   try {
-    const result = await browser.runtime.sendMessage({ action: 'getSiteProfile' });
-    if (result?.remembered && result.profile?.settings) {
-      frameSettings = mergeSettings(DEFAULT_SETTINGS, result.profile.settings);
+    const [siteResult, globalResult] = await Promise.all([
+      browser.runtime.sendMessage({ action: 'getSiteProfile' }),
+      browser.runtime.sendMessage({ action: 'getGlobalSettings' })
+    ]);
+    const initialSettings = siteResult?.remembered && siteResult.profile?.settings
+      ? siteResult.profile.settings
+      : globalResult?.enabled && globalResult.settings
+        ? globalResult.settings
+        : null;
+    if (initialSettings) {
+      frameSettings = mergeSettings(DEFAULT_SETTINGS, initialSettings);
       hasUserSettings = true;
+      notifyBadge(frameSettings);
     }
   } catch (error) {
-    console.warn('Unable to load the remembered site profile:', error);
+    console.warn('Unable to load the initial audio settings:', error);
   }
 }
 
@@ -462,6 +548,16 @@ async function handleMessage(message) {
 
       case 'applySettings':
         return applySettings(message.elid, message.settings);
+
+      case 'getAudioLevel': {
+        const el = document.querySelector(`[data-x-soundfixer-id="${message.elid}"]`);
+        return el
+          ? { success: true, ...getAudioLevel(el) }
+          : { success: false, peak: 0, clipping: false, contextState: 'unavailable' };
+      }
+
+      case 'applyShortcut':
+        return applyShortcut(message.command);
 
 		case 'setSiteDisabled':
 			return setSiteDisabled(message.disabled);
@@ -519,9 +615,10 @@ function registerMediaFromNode(node) {
 
 async function initialize() {
 	await Promise.all([
-		loadRememberedSiteProfile(),
+		loadInitialSettings(),
 		loadSiteExceptionStatus()
 	]);
+  notifyBadge(frameSettings, frameDisabled);
   scanMediaElements();
 
   const observer = new MutationObserver(mutations => {

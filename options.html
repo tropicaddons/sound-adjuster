@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Sound Adjuster — Site exceptions</title>
+	<title>Sound Adjuster — Settings</title>
 	<link rel="stylesheet" href="options.css">
 </head>
 <body>
@@ -11,10 +11,60 @@
 		<header class="page-header">
 			<img src="icon.svg" alt="" width="40" height="40">
 			<div>
-				<h1>Site exceptions</h1>
-				<p>Sound Adjuster stays off on these sites.</p>
+				<h1>Sound Adjuster settings</h1>
+				<p>Choose optional defaults and manage sites where processing stays off.</p>
 			</div>
 		</header>
+
+		<section class="settings-card" aria-labelledby="defaults-title">
+			<div class="card-header">
+				<div>
+					<h2 id="defaults-title">Default audio settings</h2>
+					<p>Apply these settings after a reload or in new tabs unless that site has its own remembered settings.</p>
+				</div>
+				<label class="enable-defaults"><input type="checkbox" class="defaults-enabled"> Enabled</label>
+			</div>
+
+			<div class="defaults-fields">
+				<label>Gain <input type="number" class="default-gain" min="0" max="5" step="0.05" value="1"></label>
+				<label>Pan <input type="number" class="default-pan" min="-1" max="1" step="0.05" value="0"></label>
+				<label>Equalizer
+					<select class="default-preset">
+						<option value="flat">Flat</option>
+						<option value="rock">Rock</option>
+						<option value="pop">Pop</option>
+						<option value="jazz">Jazz</option>
+						<option value="classical">Classical</option>
+						<option value="bassBoost">Bass+</option>
+						<option value="vocal">Vocal</option>
+						<option value="dance">Dance</option>
+						<option value="custom" disabled>Custom</option>
+					</select>
+				</label>
+				<label class="check-field"><input type="checkbox" class="default-mono"> Mono</label>
+				<label class="check-field"><input type="checkbox" class="default-flip"> Flip L/R</label>
+			</div>
+			<div class="settings-actions">
+				<button type="button" class="save-defaults">Save defaults</button>
+				<span class="defaults-status" role="status" aria-live="polite"></span>
+			</div>
+		</section>
+
+		<section class="settings-card shortcuts-card" aria-labelledby="shortcuts-title">
+			<div class="card-header">
+				<div>
+					<h2 id="shortcuts-title">Keyboard shortcuts</h2>
+					<p>Control the active tab without opening the popup. Firefox lets you change these combinations.</p>
+				</div>
+				<button type="button" class="edit-shortcuts">Edit shortcuts</button>
+			</div>
+			<ul class="shortcut-list">
+				<li data-command="increase-gain"><span>Increase gain</span><kbd>Alt+Up</kbd></li>
+				<li data-command="decrease-gain"><span>Decrease gain</span><kbd>Alt+Down</kbd></li>
+				<li data-command="reset-audio"><span>Reset audio</span><kbd>Alt+Shift+0</kbd></li>
+				<li data-command="toggle-mono"><span>Toggle mono</span><kbd>Alt+Shift+M</kbd></li>
+			</ul>
+		</section>
 
 		<section class="exceptions-card" aria-labelledby="exceptions-title">
 			<div class="card-header">
@@ -30,6 +80,7 @@
 			<p class="options-status" role="status" aria-live="polite"></p>
 		</section>
 	</main>
+	<script src="popup-state.js"></script>
 	<script src="options.js"></script>
 </body>
 </html>

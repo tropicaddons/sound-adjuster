@@ -76,7 +76,7 @@
 		return Math.max(range[0], Math.min(range[1], Number(stepped.toFixed(2))));
 	}
 
-	function bindWheelAdjustment(target, setting, readValue, applyValue) {
+	function bindWheelAdjustment(target, setting, readValue, applyValue, readSettings = () => ({})) {
 		if (!target) return;
 		let accumulatedDelta = 0;
 		target.addEventListener('wheel', event => {
@@ -93,7 +93,7 @@
 			const direction = accumulatedDelta < 0 ? 1 : -1;
 			accumulatedDelta = 0;
 			const currentValue = Number.parseFloat(readValue());
-			const nextValue = stepSettingValue(setting, currentValue, direction);
+			const nextValue = stepSettingValue(setting, currentValue, direction, readSettings());
 			if (nextValue === currentValue) return;
 			applyValue(nextValue);
 		}, { passive: false });
@@ -134,8 +134,14 @@
 		const mono = container.querySelector('.element-mono');
 		const flip = container.querySelector('.element-flip');
 
-		if (gain) gain.value = String(normalized.gain);
-		if (gainNumber) gainNumber.value = normalized.gain.toFixed(2);
+		if (gain) {
+			gain.max = '5';
+			gain.value = String(normalized.gain);
+		}
+		if (gainNumber) {
+			gainNumber.max = '5';
+			gainNumber.value = normalized.gain.toFixed(2);
+		}
 		if (pan) pan.value = String(normalized.pan);
 		if (panNumber) panNumber.value = String(normalized.pan);
 		if (mono) mono.checked = normalized.mono;

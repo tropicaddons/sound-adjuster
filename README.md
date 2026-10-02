@@ -1,6 +1,6 @@
 # Sound Adjuster
 
-Sound Adjuster is a Firefox extension for changing the volume, stereo balance, and equalizer settings of audio and video on the current page.
+Sound Adjuster is a privacy-friendly, open-source Firefox extension for boosting and shaping tab audio with up to 5× gain, stereo balance, a five-band equalizer, and local profiles.
 
 [![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-blue?logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/tropicaddons)
@@ -12,30 +12,42 @@ The demo lets you try the controls before installing. It processes a sample in y
 ## Features
 
 - Volume gain from 0× to 5×
+- Live level/clipping indicator beside the gain value
 - Left and right stereo balance
 - Five-band equalizer with presets
 - Mono and channel-flip controls
 - Optional per-site profiles that restore settings after page reloads
+- Optional global defaults for supported sites
 - Multiple named profiles for each site, with instant switching from the popup
 - Per-site disable list with a dedicated exceptions manager
 - One-click local diagnostics copy without media URLs
 - Light and dark themes
 - Automatic detection of media added after the page loads
 - Reliable audio recovery when an autoplay feed video is unmuted
+- Keyboard shortcuts for gain, reset, and mono controls
+- Toolbar badge for the active gain, mono, balance, or disabled state
 
 ## Site profiles
 
-Turn on **Remember** in the footer to store the current gain, pan, mono, channel-flip, and equalizer settings for the active site. The checkbox reflects whether the profile is active; extra text appears only after an action or if storage fails. The profile is applied before the first media scan after a page reload, including media added later.
+Turn on **Remember** in the footer to store the current gain, pan, mono, channel-flip, and equalizer settings for the active site. The switch reflects whether the profile is active; extra text appears only after an action or if storage fails. The profile is applied before the first media scan after a page reload, including media added later.
 
-Remembered settings and named profiles stay on the local machine and are never synchronized or used for tracking. Private windows and non-HTTP(S) pages do not read or write profiles. Clearing the checkbox removes the automatically restored settings without changing the sound in the current tab.
+Remembered settings and named profiles stay on the local machine and are never synchronized or used for tracking. Private windows and non-HTTP(S) pages do not read or write profiles. Turning off the switch removes the automatically restored settings without changing the sound in the current tab.
 
 Open the footer menu and choose **Profiles** to save or switch complete audio setups for the active site. Each site can have up to 12 named profiles containing gain, pan, mono, channel flip, and every equalizer band. The profile screen opens in the same menu without changing the popup size. **Default** restores the original settings, **Save current…** stores the controls as they are, and **Manage profiles** lets you remove saved entries. Selecting a profile remains temporary unless **Remember** is enabled.
 
 ## Site exceptions and diagnostics
 
-Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately; after the tab reloads, Sound Adjuster skips creating an audio graph on that site. **Manage site exceptions** opens a separate page where disabled sites can be removed individually or cleared together.
+Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately; after the tab reloads, Sound Adjuster skips creating an audio graph on that site. **Settings and exceptions** opens a separate page where global defaults, shortcuts, and disabled sites can be managed.
 
 **Copy diagnostics** copies the extension version, hostname, capability summary, media count, current settings, and browser information. It does not include the page path or media source URLs.
+
+## Gain, defaults, and shortcuts
+
+The gain range is 0×–5×. The compact level indicator beside the gain value warns when the source approaches clipping. Gain cannot restore detail that is missing from a quiet or distorted recording.
+
+The settings page can apply an optional global starting point for gain, balance, an equalizer preset, mono, and channel flip. A remembered site profile always takes priority over the global default. Global defaults are not read in private windows.
+
+The default shortcuts are `Alt+Up` and `Alt+Down` for gain, `Alt+Shift+0` for reset, and `Alt+Shift+M` for mono. They can be changed from Firefox’s extension shortcut settings.
 
 ## Install from source
 

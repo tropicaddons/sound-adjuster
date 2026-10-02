@@ -14,22 +14,46 @@
   <div id="elements-pane">
     <header>
       <h1>Sound Adjuster</h1>
+		<a class="support-button" href="https://buymeacoffee.com/tropicaddons" target="_blank" rel="noopener noreferrer" aria-label="Support Sound Adjuster">
+			<svg viewBox="0 0 24 24" aria-hidden="true">
+				<path d="M12 20.4 4.2 13A5.2 5.2 0 0 1 11.6 5.7l.4.4.4-.4A5.2 5.2 0 0 1 19.8 13Z" />
+			</svg>
+		</a>
+		<a class="github-button" href="https://github.com/tropicaddons/sound-adjuster" target="_blank" rel="noopener noreferrer" aria-label="View Sound Adjuster on GitHub">
+			<svg viewBox="0 0 24 24" aria-hidden="true">
+				<path d="M12 .7a11.3 11.3 0 0 0-3.6 22c.6.1.8-.3.8-.6v-2.2c-3.4.7-4.1-1.4-4.1-1.4-.6-1.5-1.5-1.9-1.5-1.9-1.2-.8.1-.8.1-.8 1.3.1 2 1.4 2 1.4 1.2 2 3.1 1.4 3.9 1.1.1-.9.5-1.4.9-1.7-2.7-.3-5.5-1.4-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.6 1.2A12.5 12.5 0 0 1 12 6.5c1 0 2 .1 2.9.4 2.6-1.8 3.6-1.2 3.6-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.5-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A11.3 11.3 0 0 0 12 .7Z" />
+			</svg>
+		</a>
     </header>
 	<template id="elements-tpl">
-			<div class="header-row">
-				<span class="element-label">All media</span>
-				<button type="button" class="element-reset">Reset</button>
-			</div>
 			<label class="gain-control">
 				<span>Gain</span>
 				<input type="range" class="element-gain" min="0" max="5" step="0.05" value="1" />
-				<input type="number" class="element-gain-num" value="1" min="0" max="5" step="0.05">
+				<div class="gain-value">
+					<input type="number" class="element-gain-num" value="1" min="0" max="5" step="0.05">
+					<span class="level-indicator" data-state="normal" role="status" aria-label="Output level normal" title="Output level: normal"></span>
+				</div>
 			</label>
 			<label class="pan-control">
 				<span>Pan</span>
 				<input type="range" class="element-pan" min="-1" max="1" step="0.05" value="0" />
 				<input type="number" class="element-pan-num" value="0" min="-1" max="1" step="0.05">
 			</label>
+			<div class="control-actions">
+				<div class="checkboxes">
+					<label>
+						<input type="checkbox" class="element-mono" />
+						<span class="switch-control" aria-hidden="true"></span>
+						<span>Mono</span>
+					</label>
+					<label>
+						<input type="checkbox" class="element-flip" />
+						<span class="switch-control" aria-hidden="true"></span>
+						<span>Flip L/R</span>
+					</label>
+				</div>
+				<button type="button" class="element-reset">Reset</button>
+			</div>
 
 			<div class="equalizer-section collapsed">
 				<div class="equalizer-header">
@@ -79,16 +103,6 @@
 					</label>
 				</div>
 			</div>
-			<div class="checkboxes">
-				<label>
-					<span>Mono</span>
-					<input type="checkbox" class="element-mono" />
-				</label>
-				<label>
-					<span>Flip L/R</span>
-					<input type="checkbox" class="element-flip" />
-				</label>
-			</div>
 	</template>
 	<div class="control-card">
 		<div id="all-elements"></div>
@@ -98,6 +112,7 @@
 				<div class="site-footer-actions">
 					<label class="site-profile-toggle" hidden>
 						<input type="checkbox" class="remember-site" aria-label="Remember settings for this site" />
+						<span class="switch-control" aria-hidden="true"></span>
 						<span class="site-profile-label">Remember</span>
 					</label>
 					<div class="more-menu-wrap">
@@ -112,7 +127,7 @@
 								<button type="button" class="menu-disable-site" role="menuitem">Disable on this site</button>
 								<button type="button" class="menu-copy-diagnostics" role="menuitem">Copy diagnostics</button>
 								<div class="menu-separator" role="separator"></div>
-								<button type="button" class="menu-manage-exceptions" role="menuitem">Manage site exceptions</button>
+								<button type="button" class="menu-manage-exceptions" role="menuitem">Settings and exceptions</button>
 							</div>
 							<div class="profile-flyout" role="menu" aria-label="Profiles" hidden>
 								<div class="profile-menu-header">
