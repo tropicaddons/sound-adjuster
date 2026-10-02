@@ -213,9 +213,18 @@ input[type="checkbox"] {
 	color: var(--accent);
 }
 
-.defaults-status {
+.defaults-status,
+.support-preference-status {
 	color: var(--muted);
 	font-size: 12px;
+}
+
+.support-preference-status:empty {
+	display: none;
+}
+
+.support-preference-status:not(:empty) {
+	margin-top: 12px;
 }
 
 .defaults-status[data-state="error"] {

@@ -34,6 +34,32 @@ const defaultFlip = document.querySelector('.default-flip');
 const saveDefaultsButton = document.querySelector('.save-defaults');
 const defaultsStatus = document.querySelector('.defaults-status');
 const editShortcutsButton = document.querySelector('.edit-shortcuts');
+const showSupportButton = document.querySelector('.show-support-button');
+const supportPreferenceStatus = document.querySelector('.support-preference-status');
+const SUPPORT_BUTTON_KEY = 'soundAdjuster.showSupportButton';
+
+async function loadSupportPreference() {
+	try {
+		const stored = await browser.storage.local.get(SUPPORT_BUTTON_KEY);
+		showSupportButton.checked = stored[SUPPORT_BUTTON_KEY] !== false;
+	} catch (error) {
+		supportPreferenceStatus.textContent = 'Couldn’t load the support button preference.';
+	}
+}
+
+showSupportButton.addEventListener('change', async () => {
+	const requested = showSupportButton.checked;
+	showSupportButton.disabled = true;
+	try {
+		await browser.storage.local.set({ [SUPPORT_BUTTON_KEY]: requested });
+		supportPreferenceStatus.textContent = requested ? 'Support button shown.' : 'Support button hidden.';
+	} catch (error) {
+		showSupportButton.checked = !requested;
+		supportPreferenceStatus.textContent = 'Couldn’t save the support button preference.';
+	} finally {
+		showSupportButton.disabled = false;
+	}
+});
 
 const equalizerPresets = {
 	flat: { eqBass: 0, eqLowMid: 0, eqMid: 0, eqHighMid: 0, eqTreble: 0 },
@@ -83,7 +109,6 @@ async function loadGlobalSettings() {
 	try {
 		const result = await browser.runtime.sendMessage({ action: 'getGlobalSettings' });
 		renderGlobalSettings(result);
-		setDefaultsStatus('');
 	} catch (error) {
 		console.warn('Unable to load default audio settings:', error);
 		setDefaultsStatus('Couldn’t load default settings.', 'error');
@@ -224,8 +249,10 @@ browser.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== 'local') return;
 	if (changes['soundAdjuster.siteExceptions.v1']) loadExceptions();
 	if (changes['soundAdjuster.globalSettings.v1']) loadGlobalSettings();
+	if (changes[SUPPORT_BUTTON_KEY]) loadSupportPreference();
 });
 
 loadExceptions();
 loadGlobalSettings();
 loadShortcutLabels();
+loadSupportPreference();

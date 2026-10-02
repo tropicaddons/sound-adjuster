@@ -47,7 +47,11 @@ The gain range is 0×–5×. The compact level indicator beside the gain value w
 
 The settings page can apply an optional global starting point for gain, balance, an equalizer preset, mono, and channel flip. A remembered site profile always takes priority over the global default. Global defaults are not read in private windows.
 
+**Reset** and the reset shortcut restore enabled global defaults, including every equalizer band. With global defaults off (or in a private window), they restore 1× gain, centered balance, Flat EQ, and mono/channel flip off. If **Remember** is on, the reset settings also replace that site's remembered settings.
+
 The default shortcuts are `Alt+Up` and `Alt+Down` for gain, `Alt+Shift+0` for reset, and `Alt+Shift+M` for mono. They can be changed from Firefox’s extension shortcut settings.
+
+The support heart can be hidden permanently from **Settings → Appearance → Show support button**. This preference is stored locally; the GitHub link remains available.
 
 ## Install from source
 

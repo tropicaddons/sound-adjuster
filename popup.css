@@ -109,6 +109,7 @@ header h1 {
 	place-items: center;
 	width: 28px;
 	height: 28px;
+	flex: 0 0 28px;
 	align-items: center;
 	margin-left: 10px;
 	padding: 5px;
@@ -122,6 +123,14 @@ header h1 {
 
 .github-button {
 	margin-left: 4px;
+}
+
+.support-button[hidden] {
+	display: none;
+}
+
+.support-button[hidden] + .github-button {
+	margin-left: 10px;
 }
 
 .support-button svg {
@@ -156,6 +165,7 @@ header h1 {
 .github-button svg {
 	width: 17px;
 	height: 17px;
+	display: block;
 	fill: currentColor;
 }
 

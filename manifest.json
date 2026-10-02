@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sound Adjuster",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Boost and shape Firefox tab audio with up to 5× gain, stereo balance, a five-band EQ, local profiles, and shortcuts.",
   "permissions": [
     "activeTab",

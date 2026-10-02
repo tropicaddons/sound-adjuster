@@ -42,16 +42,28 @@ async function updateBadge(tabId, settings, disabled = false) {
 	await browser.action.setBadgeText({ tabId, text });
 }
 
-async function applyCommandToTab(command, tab) {
-	if (!Number.isInteger(tab?.id)) return;
+async function applyCommandToTab(command, tab, targetFrameIds = null) {
+	if (!Number.isInteger(tab?.id)) return { success: false };
+	let resetSettings;
+	if (command === 'reset-audio') {
+		const defaults = await getGlobalSettings(browser.storage.local, tab.incognito === true);
+		resetSettings = defaults.enabled ? defaults.settings
+			: { ...globalThis.SoundAdjusterPopupState.DEFAULT_SETTINGS };
+	}
 	const frames = await browser.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => []);
-	const results = await Promise.all(frames.map(frame => (
+	const targetFrames = targetFrameIds ? frames.filter(frame => targetFrameIds.includes(frame.frameId)) : frames;
+	const results = await Promise.all(targetFrames.map(frame => (
 		browser.tabs.sendMessage(tab.id, {
 			action: 'applyShortcut',
-			command
+			command,
+			...(resetSettings ? { settings: resetSettings } : {})
 		}, { frameId: frame.frameId }).catch(() => null)
 	)));
-	const result = results.find(candidate => candidate?.success && candidate?.settings);
+	const result = results.find(candidate => candidate?.success && candidate?.applied !== false && candidate?.settings);
+	if (!result || results.some(candidate => candidate?.settings && (!candidate.success || candidate.applied === false))
+		|| targetFrameIds && (targetFrames.length !== targetFrameIds.length || results.some(candidate => !candidate?.success))) {
+		return { success: false };
+	}
 	if (result) {
 		await updateBadge(tab.id, result.settings, false);
 		await browser.runtime.sendMessage({
@@ -75,6 +87,7 @@ async function applyCommandToTab(command, tab) {
 			);
 		}
 	}
+	return { success: true, settings: result.settings };
 }
 
 function requestContext(message, sender) {
@@ -89,6 +102,10 @@ browser.runtime.onMessage.addListener((message, sender) => {
 	const context = requestContext(message, sender);
 
 	switch (message.action) {
+		case 'resetAudio':
+			return browser.tabs.get(sender.tab?.id ?? message.tabId).then(tab => (
+				applyCommandToTab('reset-audio', tab, message.frameIds)
+			));
 		case 'getSiteProfile':
 			return getSiteProfile(browser.storage.local, context.url, context.incognito);
 		case 'saveSiteProfile':

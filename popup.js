@@ -214,6 +214,23 @@ function toggleTheme() {
 initializeTheme();
 themeToggle.addEventListener('click', toggleTheme);
 
+const SUPPORT_BUTTON_KEY = 'soundAdjuster.showSupportButton';
+const supportButton = document.querySelector('.support-button');
+async function loadSupportPreference() {
+	try {
+		const stored = await browser.storage.local.get(SUPPORT_BUTTON_KEY);
+		supportButton.hidden = stored[SUPPORT_BUTTON_KEY] === false;
+	} catch (error) {
+		console.warn('Unable to load the support button preference:', error);
+	}
+}
+browser.storage.onChanged.addListener((changes, areaName) => {
+	if (areaName === 'local' && changes[SUPPORT_BUTTON_KEY]) {
+		supportButton.hidden = changes[SUPPORT_BUTTON_KEY].newValue === false;
+	}
+});
+loadSupportPreference();
+
 function getActiveSiteKey() {
 	const knownSiteKey = siteProfileStatus?.siteKey || siteExceptionStatus?.siteKey || namedProfilesStatus?.siteKey;
 	if (knownSiteKey) return knownSiteKey;
@@ -1161,36 +1178,27 @@ function renderFrameResults(frameResults) {
   });
 });
 
-			node.querySelector('.element-reset').onclick = function () {
-				const resetUiState = applySettingsToControls(
-					node,
-					POPUP_DEFAULT_SETTINGS,
-					equalizerPresets
-				);
-				activePreset = resetUiState.presetName;
-				syncBoostUi();
-
-				for (const [fid, els] of frameMap) {
-					for (const [elid, el] of els) {
-						const egain = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-gain`);
-						if (egain) {
-							egain.value = 1;
-							egain.parentElement.querySelector('.element-gain-num').value = '' + egain.value;
-						}
-						const epan = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-pan`);
-						if (epan) {
-							epan.value = 0;
-							epan.parentElement.querySelector('.element-pan-num').value = '' + epan.value;
-						}
-						const emono = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-mono`);
-						if (emono) emono.checked = false;
-						const eflip = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-flip`);
-						if (eflip) eflip.checked = false;
-						applySettings(fid, elid, { ...POPUP_DEFAULT_SETTINGS });
-					}
+			node.querySelector('.element-reset').onclick = async function () {
+				this.disabled = true;
+				try {
+					// Share the same reset path as the keyboard command. Only update
+					// the controls after the content scripts acknowledge the reset.
+					// Embedded players can be replaced while the popup is open or preloaded.
+					const currentFrames = await scanMedia();
+					const frameIds = currentFrames.filter(frame => Object.values(frame.media || {}).some(media => (
+						media.capability?.mode === 'full' || media.capability?.mode === 'pending'
+					))).map(frame => frame.frameId);
+					const result = await sendContextMessage('resetAudio', { tabId: tid, frameIds });
+					if (!result?.success) throw new Error('Audio reset was not applied');
+					const restored = applySettingsToControls(node, result.settings, equalizerPresets);
+					activePreset = restored.presetName;
+					syncControlsFromShortcut(restored.settings);
+				} catch (error) {
+					console.warn('Unable to reset audio:', error);
+					setFooterFeedback('Couldn’t reset audio', 'error');
+				} finally {
+					this.disabled = false;
 				}
-				renderNamedProfiles();
-				persistCurrentProfile();
 			};
 
 			node.querySelectorAll([

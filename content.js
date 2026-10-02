@@ -409,7 +409,7 @@ function setSiteDisabled(disabled) {
 	return { success: true, disabled: frameDisabled, media };
 }
 
-function applyShortcut(command) {
+function applyShortcut(command, resetSettings) {
   const elements = [...document.querySelectorAll('video, audio')];
   if (frameDisabled || elements.length === 0) {
     return { success: false, applied: false, disabled: frameDisabled };
@@ -427,7 +427,7 @@ function applyShortcut(command) {
   } else if (command === 'toggle-mono') {
     next.mono = !current.mono;
   } else if (command === 'reset-audio') {
-    next = { ...DEFAULT_SETTINGS };
+    next = mergeSettings(DEFAULT_SETTINGS, resetSettings || DEFAULT_SETTINGS);
   } else {
     return { success: false, applied: false, error: `Unknown command: ${command}` };
   }
@@ -557,7 +557,7 @@ async function handleMessage(message) {
       }
 
       case 'applyShortcut':
-        return applyShortcut(message.command);
+        return applyShortcut(message.command, message.settings);
 
 		case 'setSiteDisabled':
 			return setSiteDisabled(message.disabled);
