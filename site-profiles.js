@@ -3,6 +3,20 @@
 (function initializeSiteProfiles(root) {
 	const PROFILE_VERSION = 1;
 	const PROFILE_KEY_PREFIX = 'soundAdjuster.siteProfile.v1.';
+	// The background is the sole audio-state writer. All profile modules share this
+	// queue so read/modify/write and bulk deletion are ordered across UI requests.
+	const writeQueues = new WeakMap();
+	function enqueueStorageWrite(storageArea, operation) {
+		const previous = writeQueues.get(storageArea) || Promise.resolve();
+		const result = previous.then(operation);
+		const settled = result.catch(() => {});
+		writeQueues.set(storageArea, settled);
+		settled.then(() => {
+			if (writeQueues.get(storageArea) === settled) writeQueues.delete(storageArea);
+		});
+		return result;
+	}
+	root.SoundAdjusterStorageWrites = { enqueueStorageWrite };
 
 	function normalizeSiteKey(urlValue) {
 		try {
@@ -67,21 +81,52 @@
 			settings: normalizeSettings(settings),
 			updatedAt: now
 		};
-		await storageArea.set({ [profileStorageKey(siteKey)]: profile });
-		return { eligible: true, siteKey, remembered: true, profile };
+		return enqueueStorageWrite(storageArea, async () => {
+			await storageArea.set({ [profileStorageKey(siteKey)]: profile });
+			return { eligible: true, siteKey, remembered: true, profile };
+		});
 	}
 
 	async function removeSiteProfile(storageArea, urlValue, incognito = false) {
 		const siteKey = normalizeSiteKey(urlValue);
 		if (incognito || !siteKey || !storageArea) return ineligibleResult();
 
-		await storageArea.remove(profileStorageKey(siteKey));
-		return { eligible: true, siteKey, remembered: false, profile: null };
+		return enqueueStorageWrite(storageArea, async () => {
+			await storageArea.remove(profileStorageKey(siteKey));
+			return { eligible: true, siteKey, remembered: false, profile: null };
+		});
+	}
+
+	async function clearAllSiteProfiles(storageArea, incognito = false) {
+		if (!storageArea || incognito) return { eligible: false, removed: 0 };
+		return enqueueStorageWrite(storageArea, async () => {
+			const stored = await storageArea.get(null);
+			const keys = Object.keys(stored || {}).filter(key => key.startsWith(PROFILE_KEY_PREFIX));
+			if (keys.length) await storageArea.remove(keys);
+			return { eligible: true, removed: keys.length };
+		});
+	}
+
+	async function clearAllAudioData(storageArea, incognito = false) {
+		if (!storageArea || incognito) return { eligible: false, removed: 0 };
+		return enqueueStorageWrite(storageArea, async () => {
+			const stored = await storageArea.get(null);
+			const keys = Object.keys(stored || {}).filter(key => (
+				key.startsWith(PROFILE_KEY_PREFIX)
+				|| key.startsWith('soundAdjuster.namedProfiles.v1.')
+				|| key === 'soundAdjuster.siteExceptions.v1'
+				|| key === 'soundAdjuster.globalSettings.v1'
+			));
+			if (keys.length) await storageArea.remove(keys);
+			return { eligible: true, removed: keys.length };
+		});
 	}
 
 	const api = {
 		PROFILE_KEY_PREFIX,
 		PROFILE_VERSION,
+		clearAllAudioData,
+		clearAllSiteProfiles,
 		getSiteProfile,
 		normalizeSiteKey,
 		profileStorageKey,

@@ -33,9 +33,13 @@ Open the popup's footer menu (**…**) and choose **Settings and exceptions**. T
 
 Under **Default audio settings**, enable global defaults, choose your gain, stereo balance, equalizer preset, mono, and channel flip, then select **Save defaults**. These become the starting settings on supported sites without a remembered site profile. A remembered site profile takes priority; global defaults are not read in private windows.
 
+The **Enabled** switch saves immediately, including the currently displayed values. Turning it off makes Reset use the original audio settings without a separate Save click. After editing values, select **Save defaults**.
+
 **Reset** and the reset shortcut return to your enabled global defaults, including every equalizer band. With global defaults off (or in a private window), they restore 1× gain, centered balance, Flat EQ, and mono/channel flip off. If **Remember** is on, the reset settings also replace that site's remembered settings.
 
 The settings page follows the light or dark theme selected in the popup. Under **Appearance**, turn off **Show support button** to hide the support heart permanently. The preference stays on your device, and the GitHub link remains available.
+
+Under **Local audio data**, choose **Clear saved audio data** to remove remembered settings, named profiles, global defaults, and site exceptions. Appearance preferences remain. Saved audio data stays until you delete it or uninstall the extension. Reload existing media tabs after clearing data. In private windows, the settings page disables audio data controls and does not load normal-window saved settings.
 
 ## Keyboard shortcuts
 
@@ -60,13 +64,15 @@ Turn on **Remember** in the footer to store the current gain, pan, mono, channel
 
 Remembered settings and named profiles stay on the local machine and are never synchronized or used for tracking. Private windows and non-HTTP(S) pages do not read or write profiles. Turning off the switch removes the automatically restored settings without changing the sound in the current tab.
 
+HTTP and HTTPS addresses and the matching `www.` hostname continue to share profiles and exceptions. Firefox keeps audio records in extension-origin IndexedDB, separate from content-script storage. Existing records migrate automatically; appearance preferences remain in local extension storage. Older versions do not read this new audio store, so downgrading can make saved settings appear missing.
+
 Open the footer menu and choose **Profiles** to save or switch complete audio setups for the active site. Each site can have up to 12 named profiles containing gain, pan, mono, channel flip, and every equalizer band. The profile screen opens in the same menu without changing the popup size. **Default** restores the original settings, **Save current…** stores the controls as they are, and **Manage profiles** lets you remove saved entries. Selecting a profile remains temporary unless **Remember** is enabled.
 
 ## Site exceptions and diagnostics
 
 Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately; after the tab reloads, Sound Adjuster skips creating an audio graph on that site. Manage or remove disabled sites from **Settings and exceptions**.
 
-**Copy diagnostics** copies the extension version, hostname, capability summary, media count, current settings, and browser information. It does not include the page path or media source URLs.
+**Copy diagnostics** copies the extension version, capability summary, media count, current settings, and browser information. It omits hostnames, page paths, media source URLs, and custom profile names.
 
 ## Install from source
 
@@ -80,6 +86,8 @@ Temporary add-ons are removed when Firefox closes.
 ## Compatibility
 
 The extension works with standard HTML audio and video elements. Some sites use cross-origin media or protected playback that Firefox does not allow extensions to process safely. In those cases, Sound Adjuster leaves playback unchanged and explains why its audio controls are unavailable.
+
+Each frame shares one audio context and processes at most 32 media elements at once. Tracking is limited to 128 elements per frame and 64 frames per tab; a frame can create at most 64 native media sources before reload. Excess elements retain native playback, with limited controls. Removing media releases its processing nodes; reinserting the same element reuses its source. These bounds limit resource exhaustion on pages that continuously create media. If disabled-site preferences cannot be read, processing waits until a successful retry or reload.
 
 ## Support
 

@@ -16,11 +16,11 @@
 			</div>
 		</header>
 
-		<section class="settings-card" aria-labelledby="defaults-title">
+		<section class="settings-card" data-audio-data aria-labelledby="defaults-title">
 			<div class="card-header">
 				<div>
 					<h2 id="defaults-title">Default audio settings</h2>
-					<p>Apply these settings after a reload or in new tabs unless that site has its own remembered settings.</p>
+					<p>Apply these settings after a reload or in new tabs unless that site has its own remembered settings. The Enabled switch saves immediately; use Save defaults after editing the values.</p>
 				</div>
 				<label class="enable-defaults"><input type="checkbox" class="defaults-enabled"> Enabled</label>
 			</div>
@@ -77,7 +77,7 @@
 			</ul>
 		</section>
 
-		<section class="exceptions-card" aria-labelledby="exceptions-title">
+		<section class="exceptions-card" data-audio-data aria-labelledby="exceptions-title">
 			<div class="card-header">
 				<div>
 					<h2 id="exceptions-title">Disabled sites</h2>
@@ -89,6 +89,17 @@
 			<p class="empty-message">No site exceptions yet.</p>
 			<ul class="exceptions-list" aria-live="polite"></ul>
 			<p class="options-status" role="status" aria-live="polite"></p>
+		</section>
+
+		<section class="settings-card" data-audio-data aria-labelledby="local-data-title">
+			<div class="card-header">
+				<div>
+					<h2 id="local-data-title">Saved audio data</h2>
+					<p>Remembered sites, named profiles, disabled sites and global defaults stay on this device. Clearing browsing history does not clear these settings.</p>
+				</div>
+				<button type="button" class="clear-audio-data">Clear saved audio data</button>
+			</div>
+			<p class="audio-data-status" role="status" aria-live="polite"></p>
 		</section>
 	</main>
 	<script src="popup-state.js"></script>

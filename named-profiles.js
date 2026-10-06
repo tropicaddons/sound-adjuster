@@ -1,6 +1,8 @@
 'use strict';
 
 (function initializeNamedProfiles(root) {
+	if (!root.SoundAdjusterStorageWrites && typeof require === 'function') require('./site-profiles.js');
+	const { enqueueStorageWrite } = root.SoundAdjusterStorageWrites;
 	const NAMED_PROFILES_VERSION = 1;
 	const NAMED_PROFILES_KEY_PREFIX = 'soundAdjuster.namedProfiles.v1.';
 	const MAX_PROFILES_PER_SITE = 12;
@@ -90,60 +92,76 @@
 		now = Date.now(),
 		idFactory = createProfileId
 	) {
-		const current = await getNamedProfiles(storageArea, urlValue, incognito);
-		if (!current.eligible) return current;
-		const name = normalizeProfileName(nameValue);
-		if (!name) throw new TypeError('Profile name is required');
+		if (incognito || !storageArea || !normalizeSiteKey(urlValue)) return ineligibleResult();
+		return enqueueStorageWrite(storageArea, async () => {
+			const current = await getNamedProfiles(storageArea, urlValue, incognito);
+			if (!current.eligible) return current;
+			const name = normalizeProfileName(nameValue);
+			if (!name) throw new TypeError('Profile name is required');
 
-		const nameKey = name.toLocaleLowerCase('en-US');
-		const existingIndex = current.profiles.findIndex(profile => (
-			profile.name.toLocaleLowerCase('en-US') === nameKey
-		));
-		const profile = existingIndex >= 0
-			? {
-				...current.profiles[existingIndex],
-				name,
-				settings: normalizeSettings(settings),
-				updatedAt: now
+			const nameKey = name.toLocaleLowerCase('en-US');
+			const existingIndex = current.profiles.findIndex(profile => (
+				profile.name.toLocaleLowerCase('en-US') === nameKey
+			));
+			const profile = existingIndex >= 0
+				? {
+					...current.profiles[existingIndex],
+					name,
+					settings: normalizeSettings(settings),
+					updatedAt: now
+				}
+				: {
+					id: idFactory(now),
+					name,
+					settings: normalizeSettings(settings),
+					createdAt: now,
+					updatedAt: now
+				};
+
+			if (existingIndex < 0 && current.profiles.length >= MAX_PROFILES_PER_SITE) {
+				throw new RangeError(`A site can have at most ${MAX_PROFILES_PER_SITE} profiles`);
 			}
-			: {
-				id: idFactory(now),
-				name,
-				settings: normalizeSettings(settings),
-				createdAt: now,
-				updatedAt: now
-			};
 
-		if (existingIndex < 0 && current.profiles.length >= MAX_PROFILES_PER_SITE) {
-			throw new RangeError(`A site can have at most ${MAX_PROFILES_PER_SITE} profiles`);
-		}
+			const profiles = [...current.profiles];
+			if (existingIndex >= 0) profiles[existingIndex] = profile;
+			else profiles.push(profile);
 
-		const profiles = [...current.profiles];
-		if (existingIndex >= 0) profiles[existingIndex] = profile;
-		else profiles.push(profile);
-
-		await storageArea.set({
-			[namedProfilesStorageKey(current.siteKey)]: {
-				version: NAMED_PROFILES_VERSION,
-				siteKey: current.siteKey,
-				profiles
-			}
+			await storageArea.set({
+				[namedProfilesStorageKey(current.siteKey)]: {
+					version: NAMED_PROFILES_VERSION,
+					siteKey: current.siteKey,
+					profiles
+				}
+			});
+			return { ...current, profiles, savedProfile: profile };
 		});
-		return { ...current, profiles, savedProfile: profile };
 	}
 
 	async function removeNamedProfile(storageArea, urlValue, profileId, incognito = false) {
-		const current = await getNamedProfiles(storageArea, urlValue, incognito);
-		if (!current.eligible) return current;
-		const profiles = current.profiles.filter(profile => profile.id !== profileId);
-		await storageArea.set({
-			[namedProfilesStorageKey(current.siteKey)]: {
-				version: NAMED_PROFILES_VERSION,
-				siteKey: current.siteKey,
-				profiles
-			}
+		if (incognito || !storageArea || !normalizeSiteKey(urlValue)) return ineligibleResult();
+		return enqueueStorageWrite(storageArea, async () => {
+			const current = await getNamedProfiles(storageArea, urlValue, incognito);
+			if (!current.eligible) return current;
+			const profiles = current.profiles.filter(profile => profile.id !== profileId);
+			await storageArea.set({
+				[namedProfilesStorageKey(current.siteKey)]: {
+					version: NAMED_PROFILES_VERSION,
+					siteKey: current.siteKey,
+					profiles
+				}
+			});
+			return { ...current, profiles };
 		});
-		return { ...current, profiles };
+	}
+
+	async function clearAllNamedProfiles(storageArea, incognito = false) {
+		if (!storageArea || incognito) return { eligible: false, removed: 0 };
+		return enqueueStorageWrite(storageArea, async () => {
+			const stored = await storageArea.get(null);
+			const keys = Object.keys(stored || {}).filter(key => key.startsWith(NAMED_PROFILES_KEY_PREFIX));
+			if (keys.length) await storageArea.remove(keys);
+			return { eligible: true, removed: keys.length };
+		});
 	}
 
 	const api = {
@@ -151,6 +169,7 @@
 		MAX_PROFILES_PER_SITE,
 		NAMED_PROFILES_KEY_PREFIX,
 		NAMED_PROFILES_VERSION,
+		clearAllNamedProfiles,
 		getNamedProfiles,
 		namedProfilesStorageKey,
 		normalizeProfileName,

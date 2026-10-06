@@ -1,6 +1,8 @@
 'use strict';
 
 (function initializeGlobalSettings(root) {
+	if (!root.SoundAdjusterStorageWrites && typeof require === 'function') require('./site-profiles.js');
+	const { enqueueStorageWrite } = root.SoundAdjusterStorageWrites;
 	const GLOBAL_SETTINGS_KEY = 'soundAdjuster.globalSettings.v1';
 	const GLOBAL_SETTINGS_VERSION = 1;
 
@@ -43,13 +45,24 @@
 			settings: normalizeSettings(settings),
 			updatedAt: now
 		};
-		await storageArea.set({ [GLOBAL_SETTINGS_KEY]: value });
-		return { eligible: true, ...value };
+		return enqueueStorageWrite(storageArea, async () => {
+			await storageArea.set({ [GLOBAL_SETTINGS_KEY]: value });
+			return { eligible: true, ...value };
+		});
+	}
+
+	async function clearGlobalSettings(storageArea, incognito = false) {
+		if (!storageArea || incognito) return unavailableResult();
+		return enqueueStorageWrite(storageArea, async () => {
+			await storageArea.remove(GLOBAL_SETTINGS_KEY);
+			return { eligible: true, enabled: false, settings: normalizeSettings({}), updatedAt: 0 };
+		});
 	}
 
 	const api = {
 		GLOBAL_SETTINGS_KEY,
 		GLOBAL_SETTINGS_VERSION,
+		clearGlobalSettings,
 		getGlobalSettings,
 		saveGlobalSettings
 	};

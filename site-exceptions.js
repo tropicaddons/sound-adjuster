@@ -1,6 +1,8 @@
 'use strict';
 
 (function initializeSiteExceptions(root) {
+	if (!root.SoundAdjusterStorageWrites && typeof require === 'function') require('./site-profiles.js');
+	const { enqueueStorageWrite } = root.SoundAdjusterStorageWrites;
 	const EXCEPTIONS_VERSION = 1;
 	const EXCEPTIONS_STORAGE_KEY = 'soundAdjuster.siteExceptions.v1';
 
@@ -34,7 +36,7 @@
 		return normalizeSites(stored?.[EXCEPTIONS_STORAGE_KEY]);
 	}
 
-	async function writeSiteExceptions(storageArea, sites) {
+	async function writeSiteExceptionsNow(storageArea, sites) {
 		const normalizedSites = normalizeSites({
 			version: EXCEPTIONS_VERSION,
 			sites
@@ -46,6 +48,10 @@
 			}
 		});
 		return normalizedSites;
+	}
+
+	async function writeSiteExceptions(storageArea, sites) {
+		return enqueueStorageWrite(storageArea, () => writeSiteExceptionsNow(storageArea, sites));
 	}
 
 	function ineligibleResult() {
@@ -62,31 +68,39 @@
 	async function addSiteException(storageArea, urlValue, incognito = false) {
 		const siteKey = normalizeSiteKey(urlValue);
 		if (incognito || !siteKey || !storageArea) return ineligibleResult();
-		const sites = await readSiteExceptions(storageArea);
-		if (!sites.includes(siteKey)) sites.push(siteKey);
-		await writeSiteExceptions(storageArea, sites);
-		return { eligible: true, siteKey, disabled: true };
+		return enqueueStorageWrite(storageArea, async () => {
+			const sites = await readSiteExceptions(storageArea);
+			if (!sites.includes(siteKey)) sites.push(siteKey);
+			await writeSiteExceptionsNow(storageArea, sites);
+			return { eligible: true, siteKey, disabled: true };
+		});
 	}
 
 	async function removeSiteException(storageArea, urlValue, incognito = false) {
 		const siteKey = normalizeSiteKey(urlValue);
 		if (incognito || !siteKey || !storageArea) return ineligibleResult();
-		const sites = await readSiteExceptions(storageArea);
-		await writeSiteExceptions(storageArea, sites.filter(site => site !== siteKey));
-		return { eligible: true, siteKey, disabled: false };
+		return enqueueStorageWrite(storageArea, async () => {
+			const sites = await readSiteExceptions(storageArea);
+			await writeSiteExceptionsNow(storageArea, sites.filter(site => site !== siteKey));
+			return { eligible: true, siteKey, disabled: false };
+		});
 	}
 
 	async function removeSiteExceptionByKey(storageArea, siteKey) {
 		if (!storageArea || typeof siteKey !== 'string') return { sites: [] };
 		const normalizedKey = siteKey.trim().toLowerCase();
-		const sites = await readSiteExceptions(storageArea);
-		return { sites: await writeSiteExceptions(storageArea, sites.filter(site => site !== normalizedKey)) };
+		return enqueueStorageWrite(storageArea, async () => {
+			const sites = await readSiteExceptions(storageArea);
+			return { sites: await writeSiteExceptionsNow(storageArea, sites.filter(site => site !== normalizedKey)) };
+		});
 	}
 
 	async function clearSiteExceptions(storageArea) {
 		if (!storageArea) return { sites: [] };
-		await storageArea.remove(EXCEPTIONS_STORAGE_KEY);
-		return { sites: [] };
+		return enqueueStorageWrite(storageArea, async () => {
+			await storageArea.remove(EXCEPTIONS_STORAGE_KEY);
+			return { sites: [] };
+		});
 	}
 
 	async function listSiteExceptions(storageArea) {

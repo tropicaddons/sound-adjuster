@@ -37,6 +37,25 @@ const editShortcutsButton = document.querySelector('.edit-shortcuts');
 const showSupportButton = document.querySelector('.show-support-button');
 const supportPreferenceStatus = document.querySelector('.support-preference-status');
 const SUPPORT_BUTTON_KEY = 'soundAdjuster.showSupportButton';
+const optionsIncognito = browser.extension?.inIncognitoContext;
+const audioDataUnavailable = optionsIncognito !== false;
+const clearAudioDataButton = document.querySelector('.clear-audio-data');
+const audioDataStatus = document.querySelector('.audio-data-status');
+
+async function sendOptionsMessage(action, details = {}) {
+	if (typeof optionsIncognito !== 'boolean' || optionsIncognito) {
+		throw new Error('Saved audio data is unavailable in private windows');
+	}
+	const result = await browser.runtime.sendMessage({ action, ...details, incognito: optionsIncognito });
+	if (!result || typeof result !== 'object' || result.success === false) throw new Error(result?.error || 'Request was rejected');
+	return result;
+}
+
+if (audioDataUnavailable) {
+	document.querySelectorAll('[data-audio-data] input, [data-audio-data] select, [data-audio-data] button')
+		.forEach(control => { control.disabled = true; });
+	audioDataStatus.textContent = 'Saved audio data is unavailable in private windows. Open settings in a regular window to manage it.';
+}
 
 async function loadSupportPreference() {
 	try {
@@ -73,6 +92,7 @@ const equalizerPresets = {
 };
 const { normalizeSettings } = globalThis.SoundAdjusterPopupState;
 let loadedGlobalSettings = normalizeSettings({});
+let loadedDefaultsEnabled = false;
 
 function setDefaultsStatus(text, state = 'idle') {
 	defaultsStatus.textContent = text;
@@ -89,13 +109,14 @@ function matchingPreset(settings) {
 function updateDefaultsAvailability() {
 	defaultsFields.classList.toggle('is-disabled', !defaultsEnabled.checked);
 	defaultsFields.querySelectorAll('input, select').forEach(control => {
-		control.disabled = !defaultsEnabled.checked;
+		control.disabled = audioDataUnavailable || !defaultsEnabled.checked;
 	});
 }
 
 function renderGlobalSettings(result) {
 	const settings = normalizeSettings(result?.settings || {});
 	loadedGlobalSettings = settings;
+	loadedDefaultsEnabled = result?.enabled === true;
 	defaultsEnabled.checked = result?.enabled === true;
 	defaultGain.value = String(settings.gain);
 	defaultPan.value = String(settings.pan);
@@ -106,8 +127,13 @@ function renderGlobalSettings(result) {
 }
 
 async function loadGlobalSettings() {
+	if (audioDataUnavailable) {
+		renderGlobalSettings({ enabled: false });
+		setDefaultsStatus('Saved defaults are unavailable in private windows.');
+		return;
+	}
 	try {
-		const result = await browser.runtime.sendMessage({ action: 'getGlobalSettings' });
+		const result = await sendOptionsMessage('getGlobalSettings');
 		renderGlobalSettings(result);
 	} catch (error) {
 		console.warn('Unable to load default audio settings:', error);
@@ -150,8 +176,13 @@ function setStatus(text, state = 'idle') {
 }
 
 async function loadExceptions() {
+	if (audioDataUnavailable) {
+		renderExceptions([]);
+		setStatus('Saved disabled sites are unavailable in private windows.');
+		return;
+	}
 	try {
-		const result = await browser.runtime.sendMessage({ action: 'listSiteExceptions' });
+		const result = await sendOptionsMessage('listSiteExceptions');
 		renderExceptions(result?.sites || []);
 		setStatus('');
 	} catch (error) {
@@ -163,8 +194,7 @@ async function loadExceptions() {
 async function removeException(siteKey, button) {
 	button.disabled = true;
 	try {
-		const result = await browser.runtime.sendMessage({
-			action: 'removeSiteExceptionByKey',
+		const result = await sendOptionsMessage('removeSiteExceptionByKey', {
 			siteKey
 		});
 		renderExceptions(result?.sites || []);
@@ -206,7 +236,7 @@ clearButton.addEventListener('click', async () => {
 	if (!confirm('Enable Sound Adjuster on every disabled site?')) return;
 	clearButton.disabled = true;
 	try {
-		await browser.runtime.sendMessage({ action: 'clearSiteExceptions' });
+		await sendOptionsMessage('clearSiteExceptions');
 		renderExceptions([]);
 		setStatus('All site exceptions were removed. Reload open tabs to reconnect Sound Adjuster.');
 	} catch (error) {
@@ -217,13 +247,35 @@ clearButton.addEventListener('click', async () => {
 	}
 });
 
-defaultsEnabled.addEventListener('change', updateDefaultsAvailability);
-saveDefaultsButton.addEventListener('click', async () => {
+defaultsEnabled.addEventListener('change', async () => {
+	const enabled = defaultsEnabled.checked;
+	const previous = { enabled: loadedDefaultsEnabled, settings: loadedGlobalSettings };
+	updateDefaultsAvailability();
+	defaultsEnabled.disabled = true;
 	saveDefaultsButton.disabled = true;
 	setDefaultsStatus('Saving…');
 	try {
-		const result = await browser.runtime.sendMessage({
-			action: 'saveGlobalSettings',
+		const result = await sendOptionsMessage('saveGlobalSettings', {
+			enabled,
+			settings: readGlobalSettings()
+		});
+		renderGlobalSettings(result);
+		setDefaultsStatus(result?.enabled ? 'Defaults saved.' : 'Global defaults are off.');
+	} catch (error) {
+		console.warn('Unable to change default audio availability:', error);
+		renderGlobalSettings(previous);
+		setDefaultsStatus('Couldn’t save default settings.', 'error');
+	} finally {
+		defaultsEnabled.disabled = audioDataUnavailable;
+		saveDefaultsButton.disabled = audioDataUnavailable;
+	}
+});
+saveDefaultsButton.addEventListener('click', async () => {
+	defaultsEnabled.disabled = true;
+	saveDefaultsButton.disabled = true;
+	setDefaultsStatus('Saving…');
+	try {
+		const result = await sendOptionsMessage('saveGlobalSettings', {
 			enabled: defaultsEnabled.checked,
 			settings: readGlobalSettings()
 		});
@@ -233,7 +285,22 @@ saveDefaultsButton.addEventListener('click', async () => {
 		console.warn('Unable to save default audio settings:', error);
 		setDefaultsStatus('Couldn’t save default settings.', 'error');
 	} finally {
-		saveDefaultsButton.disabled = false;
+		defaultsEnabled.disabled = audioDataUnavailable;
+		saveDefaultsButton.disabled = audioDataUnavailable;
+	}
+});
+
+clearAudioDataButton.addEventListener('click', async () => {
+	if (audioDataUnavailable || !confirm('Clear all remembered sites, named profiles, disabled sites and global audio defaults? Your appearance preferences will stay.')) return;
+	clearAudioDataButton.disabled = true;
+	try {
+		await sendOptionsMessage('clearAudioData');
+		await Promise.all([loadGlobalSettings(), loadExceptions()]);
+		audioDataStatus.textContent = 'Saved audio data cleared. Reload open tabs to use the original audio settings.';
+	} catch (error) {
+		audioDataStatus.textContent = 'Couldn’t clear saved audio data.';
+	} finally {
+		clearAudioDataButton.disabled = audioDataUnavailable;
 	}
 });
 
@@ -250,6 +317,13 @@ browser.storage.onChanged.addListener((changes, areaName) => {
 	if (changes['soundAdjuster.siteExceptions.v1']) loadExceptions();
 	if (changes['soundAdjuster.globalSettings.v1']) loadGlobalSettings();
 	if (changes[SUPPORT_BUTTON_KEY]) loadSupportPreference();
+});
+
+browser.runtime.onMessage.addListener((message, sender) => {
+	if (sender.id !== browser.runtime.id || sender.tab || message?.action !== 'audioDataChanged') return undefined;
+	loadExceptions();
+	loadGlobalSettings();
+	return undefined;
 });
 
 loadExceptions();

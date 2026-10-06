@@ -14,9 +14,22 @@ const DEFAULT_SETTINGS = Object.freeze({
 const NEUTRAL_SETTINGS = DEFAULT_SETTINGS;
 const BASIC_MODE_HOSTS = ['tiktok.com'];
 const registeredMediaElements = new WeakSet();
+const mediaIds = new WeakMap();
+const activeMediaElements = new Map();
+const MAX_ACTIVE_AUDIO_GRAPHS = 32;
+const MAX_FRAME_AUDIO_SOURCES = 64;
+const MAX_TRACKED_MEDIA_ELEMENTS = 128;
+const PROCESSING_NODE_KEYS = ['Gain', 'Analyser', 'Pan', 'Split', 'Merge', 'Output',
+  'EqBass', 'EqLowMid', 'EqMid', 'EqHighMid', 'EqTreble'];
+let nextMediaId = 0;
+let sharedAudioContext = null;
+let frameAudioSourceCount = 0;
+let activeAudioGraphCount = 0;
+let mediaChangeTimer = null;
 let frameSettings = { ...DEFAULT_SETTINGS };
 let hasUserSettings = false;
-let frameDisabled = false;
+let frameDisabled = true;
+let siteExceptionKnown = false;
 let initializationPromise = null;
 
 function clamp(value, min, max) {
@@ -56,7 +69,7 @@ function isBasicModeHost(hostname) {
 
 function getMediaCapability(el) {
 	if (frameDisabled) {
-		return { mode: 'disabled', reason: 'site-exception' };
+		return { mode: 'disabled', reason: siteExceptionKnown ? 'site-exception' : 'site-exception-unavailable' };
 	}
 
   if (el.xSoundFixerMode === 'passthrough') {
@@ -93,6 +106,10 @@ function getMediaCapability(el) {
     return { mode: 'basic', reason: 'unknown-media-source' };
   }
 
+  if (activeAudioGraphCount >= MAX_ACTIVE_AUDIO_GRAPHS ||
+      (!el.xSoundFixerSource && frameAudioSourceCount >= MAX_FRAME_AUDIO_SOURCES)) {
+    return { mode: 'basic', reason: 'audio-resource-limit' };
+  }
   return { mode: 'full', reason: null };
 }
 
@@ -111,15 +128,20 @@ function initializeAudioGraph(el, elid) {
   }
 
   let context;
-  let source;
+  let source = el.xSoundFixerSource;
+  const createdNodes = [];
 
   try {
-    context = new AudioContextClass();
+    context = sharedAudioContext || (sharedAudioContext = new AudioContextClass());
     const gain = context.createGain();
     const analyser = context.createAnalyser();
     const pan = context.createStereoPanner();
     const split = context.createChannelSplitter(2);
     const merge = context.createChannelMerger(2);
+    const output = context.createGain();
+    output.channelCountMode = 'explicit';
+    output.channelInterpretation = 'speakers';
+    output.channelCount = 2;
 
     const eqBass = context.createBiquadFilter();
     eqBass.type = 'lowshelf';
@@ -143,12 +165,21 @@ function initializeAudioGraph(el, elid) {
     const eqTreble = context.createBiquadFilter();
     eqTreble.type = 'highshelf';
     eqTreble.frequency.value = 8000;
+    createdNodes.push(gain, analyser, pan, split, merge, output,
+      eqBass, eqLowMid, eqMid, eqHighMid, eqTreble);
 
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.65;
 
     // Create the source last so failures before this point cannot reroute audio.
-    source = context.createMediaElementSource(el);
+    // A media element can only acquire a source once. Keep that source usable
+    // on detach/reinsert, and bound lifetime sources even if the page retains them.
+    if (!source) {
+      source = context.createMediaElementSource(el);
+      frameAudioSourceCount += 1;
+    } else {
+      source.disconnect();
+    }
     source.connect(eqBass);
     eqBass.connect(eqLowMid);
     eqLowMid.connect(eqMid);
@@ -157,7 +188,8 @@ function initializeAudioGraph(el, elid) {
     eqTreble.connect(gain);
     gain.connect(analyser);
     analyser.connect(pan);
-    pan.connect(context.destination);
+    pan.connect(output);
+    output.connect(context.destination);
 
     el.xSoundFixerContext = context;
     el.xSoundFixerSource = source;
@@ -166,17 +198,22 @@ function initializeAudioGraph(el, elid) {
     el.xSoundFixerPan = pan;
     el.xSoundFixerSplit = split;
     el.xSoundFixerMerge = merge;
+    el.xSoundFixerOutput = output;
     el.xSoundFixerEqBass = eqBass;
     el.xSoundFixerEqLowMid = eqLowMid;
     el.xSoundFixerEqMid = eqMid;
     el.xSoundFixerEqHighMid = eqHighMid;
     el.xSoundFixerEqTreble = eqTreble;
-    el.xSoundFixerOriginalChannels = context.destination.channelCount;
+    el.xSoundFixerFlipped = false;
     el.xSoundFixerMode = 'full';
+    activeAudioGraphCount += 1;
 
     return { success: true, capability: { mode: 'full', reason: null } };
   } catch (error) {
     console.warn(`Failed to create the audio graph for ${elid}:`, error);
+    for (const node of createdNodes) {
+      try { node.disconnect(); } catch (_) { /* Best-effort failed graph cleanup. */ }
+    }
 
     if (source && context) {
       try {
@@ -195,8 +232,9 @@ function initializeAudioGraph(el, elid) {
       };
     }
 
-    if (context && context.state !== 'closed') {
+    if (context && frameAudioSourceCount === 0 && context.state !== 'closed') {
       context.close().catch(() => {});
+      sharedAudioContext = null;
     }
 
     el.xSoundFixerMode = 'basic';
@@ -211,9 +249,7 @@ function setChannelMode(el, settings) {
   if (!el.xSoundFixerContext || !el.xSoundFixerPan) return;
 
   try {
-    el.xSoundFixerContext.destination.channelCount = settings.mono
-      ? 1
-      : el.xSoundFixerOriginalChannels;
+    el.xSoundFixerOutput.channelCount = settings.mono ? 1 : 2;
   } catch (error) {
     console.warn('Unable to change destination channel count:', error);
   }
@@ -229,9 +265,9 @@ function setChannelMode(el, settings) {
       el.xSoundFixerPan.connect(el.xSoundFixerSplit);
       el.xSoundFixerSplit.connect(el.xSoundFixerMerge, 0, 1);
       el.xSoundFixerSplit.connect(el.xSoundFixerMerge, 1, 0);
-      el.xSoundFixerMerge.connect(el.xSoundFixerContext.destination);
+      el.xSoundFixerMerge.connect(el.xSoundFixerOutput);
     } else {
-      el.xSoundFixerPan.connect(el.xSoundFixerContext.destination);
+      el.xSoundFixerPan.connect(el.xSoundFixerOutput);
     }
 
     el.xSoundFixerFlipped = settings.flip;
@@ -322,7 +358,7 @@ function applyFullSettings(el, elid, updates) {
 }
 
 function applySettingsToElement(el, updates) {
-  const elid = el.getAttribute('data-x-soundfixer-id');
+  const elid = getMediaId(el);
   const capability = getMediaCapability(el);
 
 	if (capability.mode === 'disabled') {
@@ -361,7 +397,7 @@ function applySettingsToElement(el, updates) {
 }
 
 function applySettings(elid, updates, rememberForFrame = true) {
-  const el = document.querySelector(`[data-x-soundfixer-id="${elid}"]`);
+  const el = resolveMediaElement(elid);
   if (!el) {
     return {
       success: false,
@@ -399,10 +435,11 @@ function setElementSiteDisabled(el, disabled) {
 }
 
 function setSiteDisabled(disabled) {
+	siteExceptionKnown = true;
 	frameDisabled = disabled === true;
 	const media = [];
-	for (const el of document.querySelectorAll('video, audio')) {
-		registerMediaElement(el);
+	scanMediaElements();
+	for (const el of activeMediaElements.values()) {
 		media.push(setElementSiteDisabled(el, frameDisabled));
 	}
 	notifyBadge(frameSettings, frameDisabled);
@@ -410,7 +447,8 @@ function setSiteDisabled(disabled) {
 }
 
 function applyShortcut(command, resetSettings) {
-  const elements = [...document.querySelectorAll('video, audio')];
+  scanMediaElements();
+  const elements = [...activeMediaElements.values()];
   if (frameDisabled || elements.length === 0) {
     return { success: false, applied: false, disabled: frameDisabled };
   }
@@ -439,26 +477,85 @@ function applyShortcut(command, resetSettings) {
   return { success: true, applied: media.some(result => result?.applied), settings: { ...frameSettings } };
 }
 
+function isMediaElement(el) {
+  return el && (el.tagName === 'VIDEO' || el.tagName === 'AUDIO') &&
+    (typeof HTMLMediaElement === 'undefined' || el instanceof HTMLMediaElement);
+}
+
+function getMediaId(el) {
+  return mediaIds.get(el);
+}
+
 function assignMediaId(el) {
-  if (!el.hasAttribute('data-x-soundfixer-id')) {
-    el.setAttribute('data-x-soundfixer-id', Math.random().toString(36).slice(2, 12));
+  if (!activeMediaElements.has(getMediaId(el)) && activeMediaElements.size >= MAX_TRACKED_MEDIA_ELEMENTS) return null;
+  if (!mediaIds.has(el)) mediaIds.set(el, `sa-${++nextMediaId}`);
+  const id = getMediaId(el);
+  activeMediaElements.set(id, el);
+  return id;
+}
+
+function resolveMediaElement(id) {
+  if (typeof id !== 'string' || id.length > 32) return null;
+  const el = activeMediaElements.get(id);
+  return isMediaElement(el) && el.isConnected !== false ? el : null;
+}
+
+function releaseMediaElement(el) {
+  activeMediaElements.delete(getMediaId(el));
+  clearTimeout(el.xSoundFixerRestoreTimer);
+  if (!el.xSoundFixerGain) return;
+  // Closing the context or disconnecting the source alone would silence this
+  // element permanently. Keep its native-equivalent route alive for playback.
+  el.xSoundFixerSource.disconnect();
+  el.xSoundFixerSource.connect(el.xSoundFixerContext.destination);
+  for (const key of PROCESSING_NODE_KEYS) {
+    const node = el[`xSoundFixer${key}`];
+    if (node) node.disconnect();
+    delete el[`xSoundFixer${key}`];
   }
-  return el.getAttribute('data-x-soundfixer-id');
+  delete el.xSoundFixerFlipped;
+  activeAudioGraphCount -= 1;
+}
+
+function pruneRemovedMedia() {
+  let changed = false;
+  for (const el of activeMediaElements.values()) {
+    if (el.isConnected === false) {
+      releaseMediaElement(el);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function notifyMediaChanged() {
+  if (mediaChangeTimer !== null) return;
+  mediaChangeTimer = setTimeout(() => {
+    mediaChangeTimer = null;
+    browser.runtime.sendMessage({ action: 'mediaElementsChanged' }).catch(() => {});
+  }, 50);
 }
 
 function scheduleSettingsRestore(el) {
-  if (!hasUserSettings) return;
+  if (!hasUserSettings || el.isConnected === false) return;
   clearTimeout(el.xSoundFixerRestoreTimer);
   el.xSoundFixerRestoreTimer = setTimeout(() => {
-    assignMediaId(el);
+    if (el.isConnected === false) return;
+    if (!assignMediaId(el)) return;
     applySettingsToElement(el, frameSettings);
   }, 0);
 }
 
 function registerMediaElement(el) {
-  assignMediaId(el);
+  if (!isMediaElement(el) || el.isConnected === false) return;
+  if (!assignMediaId(el)) return;
 	el.xSoundFixerDisabled = frameDisabled;
-  if (registeredMediaElements.has(el)) return;
+  if (registeredMediaElements.has(el)) {
+    if (hasUserSettings && !frameDisabled && !el.xSoundFixerGain) {
+      applySettingsToElement(el, frameSettings);
+    }
+    return;
+  }
   registeredMediaElements.add(el);
 
   el.addEventListener('loadstart', () => scheduleSettingsRestore(el));
@@ -492,13 +589,14 @@ function getMediaState(el) {
 }
 
 function scanMediaElements() {
-  const result = new Map();
-
+  pruneRemovedMedia();
+  let inspected = 0;
   for (const el of document.querySelectorAll('video, audio')) {
+    if (inspected++ >= MAX_TRACKED_MEDIA_ELEMENTS) break;
     registerMediaElement(el);
-    result.set(assignMediaId(el), getMediaState(el));
   }
-
+  const result = new Map();
+  for (const [id, el] of activeMediaElements) result.set(id, getMediaState(el));
   return result;
 }
 
@@ -526,10 +624,13 @@ async function loadInitialSettings() {
 async function loadSiteExceptionStatus() {
 	try {
 		const result = await browser.runtime.sendMessage({ action: 'getSiteExceptionStatus' });
+		if (!result || typeof result.disabled !== 'boolean') throw new Error('Invalid site exception response');
+		siteExceptionKnown = true;
 		frameDisabled = result?.disabled === true;
 	} catch (error) {
 		console.warn('Unable to load the site exception status:', error);
-		frameDisabled = false;
+		siteExceptionKnown = false;
+		frameDisabled = true;
 	}
 }
 
@@ -550,7 +651,7 @@ async function handleMessage(message) {
         return applySettings(message.elid, message.settings);
 
       case 'getAudioLevel': {
-        const el = document.querySelector(`[data-x-soundfixer-id="${message.elid}"]`);
+        const el = resolveMediaElement(message.elid);
         return el
           ? { success: true, ...getAudioLevel(el) }
           : { success: false, peak: 0, clipping: false, contextState: 'unavailable' };
@@ -600,16 +701,17 @@ function registerMediaFromNode(node) {
     }
   }
 
-  if (node.querySelectorAll) {
+  if (node.querySelectorAll && activeMediaElements.size < MAX_TRACKED_MEDIA_ELEMENTS) {
     const nestedMedia = node.querySelectorAll('video, audio');
-    nestedMedia.forEach(registerMediaElement);
+    for (const el of nestedMedia) {
+      if (activeMediaElements.size >= MAX_TRACKED_MEDIA_ELEMENTS) break;
+      registerMediaElement(el);
+    }
     mediaChanged = mediaChanged || nestedMedia.length > 0;
   }
 
   if (mediaChanged) {
-    browser.runtime.sendMessage({ action: 'mediaElementsChanged' }).catch(() => {
-      // The popup is usually closed; no listener is a normal condition.
-    });
+    notifyMediaChanged();
   }
 }
 
@@ -622,9 +724,16 @@ async function initialize() {
   scanMediaElements();
 
   const observer = new MutationObserver(mutations => {
+    // Prune before registering additions so removed graphs free active slots.
+    if (pruneRemovedMedia()) notifyMediaChanged();
+    let inspected = 0;
     for (const mutation of mutations) {
+      if (inspected++ >= MAX_TRACKED_MEDIA_ELEMENTS) break;
       if (mutation.type === 'childList') {
-        mutation.addedNodes.forEach(registerMediaFromNode);
+        for (const node of mutation.addedNodes) {
+          if (inspected++ >= MAX_TRACKED_MEDIA_ELEMENTS) break;
+          registerMediaFromNode(node);
+        }
       }
 
       if (mutation.type === 'attributes') {

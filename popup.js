@@ -96,6 +96,8 @@ let footerFeedbackTimer = null;
 let profileManageMode = false;
 const AUTO_MEDIA_SCAN_INTERVAL_MS = 700;
 const MAX_NAMED_PROFILES_PER_SITE = 12;
+const MAX_SCANNED_FRAMES = 64;
+const MAX_MEDIA_PER_FRAME = 128;
 
 // Equalizer Presets
 const equalizerPresets = {
@@ -120,9 +122,16 @@ const {
 	updatePresetButtons
 } = globalThis.SoundAdjusterPopupState;
 
+async function sendUiMessage(message) {
+	const result = await browser.runtime.sendMessage(message);
+	if (!result || typeof result !== 'object' || result.success === false) throw new Error(result?.error || 'Request was rejected');
+	return result;
+}
+
 function sendProfileMessage(action, settings) {
-	return browser.runtime.sendMessage({
+	return sendUiMessage({
 		action,
+		tabId: activeTab?.id,
 		tabUrl: activeTab?.url,
 		incognito: activeTab?.incognito === true,
 		settings
@@ -130,8 +139,9 @@ function sendProfileMessage(action, settings) {
 }
 
 function sendContextMessage(action, details = {}) {
-	return browser.runtime.sendMessage({
+	return sendUiMessage({
 		action,
+		tabId: activeTab?.id,
 		tabUrl: activeTab?.url,
 		incognito: activeTab?.incognito === true,
 		...details
@@ -509,7 +519,10 @@ function applySettingsToAllMedia(settings) {
 			operations.push(applySettings(fid, elid, settings));
 		}
 	}
-	return Promise.all(operations);
+	return Promise.all(operations).then(results => {
+		if (results.some(result => result?.success !== true)) throw new Error('Audio settings were not applied');
+		return results;
+	});
 }
 
 function buildDiagnosticsText() {
@@ -537,11 +550,10 @@ function buildDiagnosticsText() {
 	return [
 		'Sound Adjuster diagnostics',
 		`Version: ${browser.runtime.getManifest().version}`,
-		`Site: ${getActiveSiteKey() || 'unavailable'}`,
 		`Site disabled: ${siteExceptionStatus?.disabled === true ? 'yes' : 'no'}`,
 		`Remembered profile: ${siteProfileStatus?.remembered === true ? 'yes' : 'no'}`,
 		`Named profiles: ${(namedProfilesStatus.profiles || []).length}`,
-		`Active named profile: ${activeNamedProfile?.name || 'Custom'}`,
+		`Active named profile: ${activeNamedProfile?.builtIn ? 'Default' : activeNamedProfile ? 'Saved profile' : 'Custom'}`,
 		`Frames scanned: ${frameMap.size}`,
 		`Media elements: ${mediaCount}`,
 		`Capabilities: ${formatCounts(capabilities)}`,
@@ -754,6 +766,8 @@ function showNoMediaState() {
 function showUnavailableMediaState(capability) {
 	stopLevelMonitoring();
 	const descriptions = {
+		'audio-resource-limit': 'This page has reached the audio processing limit. Playback continues normally. Reload the tab to process new media.',
+		'site-exception-unavailable': 'Sound Adjuster could not check your disabled-site preferences. Reload the tab to try again.',
 		'site-restricted': 'This site prevents Sound Adjuster from safely accessing its audio. Playback continues normally.',
 		'cross-origin-media': 'Firefox blocks the audio access needed for this media source. Playback continues normally.',
 		'protected-media': 'This media uses protected playback, so Firefox does not allow extensions to adjust its audio. Playback continues normally.',
@@ -794,9 +808,13 @@ function applySettings(fid, elid, newSettings) {
 		elid: elid,
 		settings: newSettings
 	}, { frameId: fid }).then(result => {
+		if (result?.success !== true) throw new Error(result?.error || 'Audio settings were not applied');
 		const capability = result?.capability;
 		if (`${fid}:${elid}` === referenceMediaKey && capability) {
-			if (capability.mode === 'disabled') showSiteDisabledState();
+			if (capability.mode === 'disabled') {
+				if (capability.reason === 'site-exception-unavailable') showUnavailableMediaState(capability);
+				else showSiteDisabledState();
+			}
 			if (capability.mode === 'basic' || capability.mode === 'unsupported') {
 				showUnavailableMediaState(capability);
 			}
@@ -804,7 +822,8 @@ function applySettings(fid, elid, newSettings) {
 		return result;
 	}).catch(err => {
 		console.error(`Failed to apply settings to element ${elid}:`, err);
-		throw err;
+		setFooterFeedback('Couldn’t apply audio settings', 'error');
+		return { success: false, error: err.message };
 	});
 }
 
@@ -846,14 +865,32 @@ function startLevelMonitoring(node) {
 	refresh();
 }
 
+function sanitizeScannedMedia(candidate) {
+	if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
+	const result = {};
+	for (const [id, media] of Object.entries(candidate).slice(0, MAX_MEDIA_PER_FRAME)) {
+		if (!/^sa-[1-9]\d{0,15}$/.test(id) || !media || typeof media !== 'object') continue;
+		const mode = media.capability?.mode;
+		if (!['full', 'basic', 'pending', 'unsupported', 'disabled'].includes(mode)) continue;
+		result[id] = {
+			type: media.type === 'audio' ? 'audio' : 'video',
+			isPlaying: media.isPlaying === true,
+			settings: normalizeSettings(media.settings),
+			capability: { mode, reason: typeof media.capability?.reason === 'string' ? media.capability.reason.slice(0, 64) : null },
+			siteDisabled: media.siteDisabled === true
+		};
+	}
+	return result;
+}
+
 function scanMedia() {
 	return browser.webNavigation.getAllFrames({ tabId: tid }).then(frames => {
-		return Promise.all(frames.map(frame =>
+		return Promise.all(frames.slice(0, MAX_SCANNED_FRAMES).map(frame =>
 			browser.tabs.sendMessage(tid, { action: "scanMedia" }, { frameId: frame.frameId })
 			.then(result => {
 				return {
 					frameId: frame.frameId,
-					media: result ? result.media : {}
+					media: result?.success === true ? sanitizeScannedMedia(result.media) : {}
 				};
 			}).catch(err => {
 				console.warn(`Unable to scan frame ${frame.frameId}:`, err.message);
@@ -925,7 +962,7 @@ function renderFrameResults(frameResults) {
 		// Process results from all frames - collect all media for global control
 		for (const frameResult of frameResults) {
 			const fid = frameResult.frameId;
-			const mediaMap = new Map(Object.entries(frameResult.media || {}));
+			const mediaMap = new Map(Object.entries(sanitizeScannedMedia(frameResult.media)));
 			frameMap.set(fid, mediaMap);
 			elCount += mediaMap.size; // Count total elements
 		}
@@ -947,7 +984,8 @@ function renderFrameResults(frameResults) {
 			referenceMediaKey = `${referenceEntry.fid}:${referenceEntry.elid}`;
 
 			if (referenceMedia.capability?.mode === 'disabled') {
-				showSiteDisabledState();
+				if (referenceMedia.capability.reason === 'site-exception-unavailable') showUnavailableMediaState(referenceMedia.capability);
+				else showSiteDisabledState();
 				return;
 			}
 
@@ -977,11 +1015,6 @@ function renderFrameResults(frameResults) {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, boostSettings);
-						const egain = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-gain`);
-						if (egain) {
-							egain.value = value;
-							egain.parentElement.querySelector('.element-gain-num').value = '' + value;
-						}
 					}
 				}
 				gain.value = value;
@@ -1010,11 +1043,6 @@ function renderFrameResults(frameResults) {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, { pan: value });
-						const epan = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-pan`);
-						if (epan) {
-							epan.value = value;
-							epan.parentElement.querySelector('.element-pan-num').value = '' + value;
-						}
 					}
 				}
 				pan.value = value;
@@ -1039,8 +1067,6 @@ function renderFrameResults(frameResults) {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, { mono: mono.checked });
-						const emono = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-mono`);
-						if (emono) emono.checked = mono.checked;
 					}
 				}
 			});
@@ -1050,8 +1076,6 @@ function renderFrameResults(frameResults) {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, { flip: flip.checked });
-						const eflip = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-flip`);
-						if (eflip) eflip.checked = flip.checked;
 					}
 				}
 			});
@@ -1085,9 +1109,6 @@ function renderFrameResults(frameResults) {
 					for (const [fid, els] of frameMap) {
 						for (const [elid, el] of els) {
 							applySettings(fid, elid, setting);
-							// Update individual controls
-							const eElement = document.querySelector(`[data-fid="${fid}"][data-elid="${elid}"] .element-${band.replace('eq', 'eq-')}`);
-							if (eElement) eElement.value = value;
 						}
 					}
 
@@ -1224,7 +1245,9 @@ function renderFrameResults(frameResults) {
 	}
 
 browser.runtime.onMessage.addListener((message, sender) => {
+	if (sender.id !== browser.runtime.id) return undefined;
 	if (message?.action === 'shortcutApplied') {
+		if (sender.tab) return undefined;
 		if (message.tabId === tid) syncControlsFromShortcut(message.settings);
 		return undefined;
 	}
