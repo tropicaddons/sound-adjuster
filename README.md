@@ -83,11 +83,13 @@ Choose **Disable on this site** from the footer menu to add the current hostname
 
 Temporary add-ons are removed when Firefox closes.
 
+Allow website access for Sound Adjuster in Firefox's extension permissions. Audio detection requires access to the page and its embedded players. Reload existing media tabs after updating the extension.
+
 ## Compatibility
 
 The extension works with standard HTML audio and video elements. Some sites use cross-origin media or protected playback that Firefox does not allow extensions to process safely. In those cases, Sound Adjuster leaves playback unchanged and explains why its audio controls are unavailable.
 
-Each frame shares one audio context and processes at most 32 media elements at once. Tracking is limited to 128 elements per frame and 64 frames per tab; a frame can create at most 64 native media sources before reload. Excess elements retain native playback, with limited controls. Removing media releases its processing nodes; reinserting the same element reuses its source. These bounds limit resource exhaustion on pages that continuously create media. If disabled-site preferences cannot be read, processing waits until a successful retry or reload.
+Each frame shares one audio context. Audio controls continue across long feeds and players that remain running in the background. Paused and removed media release their processing nodes; replaying or reinserting the same element reuses its source. Idle bookkeeping and media summaries are bounded to 128 entries, with recent playing media prioritized in summaries; settings still reach all tracked playing media. Tab scans cover up to 64 frames. If disabled-site preferences cannot be read, processing waits until a successful retry or reload.
 
 ## Support
 

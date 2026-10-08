@@ -1,4 +1,5 @@
 'use strict';
+globalThis.soundAdjusterContentLoaded = true;
 
 const DEFAULT_SETTINGS = Object.freeze({
   gain: 1,
@@ -16,9 +17,8 @@ const BASIC_MODE_HOSTS = ['tiktok.com'];
 const registeredMediaElements = new WeakSet();
 const mediaIds = new WeakMap();
 const activeMediaElements = new Map();
-const MAX_ACTIVE_AUDIO_GRAPHS = 32;
-const MAX_FRAME_AUDIO_SOURCES = 64;
 const MAX_TRACKED_MEDIA_ELEMENTS = 128;
+const MAX_SCANNED_MEDIA_ELEMENTS = 128;
 const PROCESSING_NODE_KEYS = ['Gain', 'Analyser', 'Pan', 'Split', 'Merge', 'Output',
   'EqBass', 'EqLowMid', 'EqMid', 'EqHighMid', 'EqTreble'];
 let nextMediaId = 0;
@@ -31,6 +31,8 @@ let hasUserSettings = false;
 let frameDisabled = true;
 let siteExceptionKnown = false;
 let initializationPromise = null;
+let mediaObserver = null;
+const mediaEventRoots = new WeakSet();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -94,9 +96,12 @@ function getMediaCapability(el) {
   }
 
   try {
-    const sourceUrl = new URL(source, window.location.href);
+    const sourceUrl = new URL(source, document.baseURI || window.location.href);
     const isHttpMedia = sourceUrl.protocol === 'http:' || sourceUrl.protocol === 'https:';
-    const isCrossOrigin = isHttpMedia && sourceUrl.origin !== window.location.origin;
+    // about:blank/srcdoc players inherit the document origin, although their
+    // location URL itself has no HTTP origin.
+    const frameOrigin = window.origin || window.location.origin;
+    const isCrossOrigin = isHttpMedia && sourceUrl.origin !== frameOrigin;
 
     if (isCrossOrigin && el.crossOrigin === null) {
       return { mode: 'basic', reason: 'cross-origin-media' };
@@ -106,10 +111,6 @@ function getMediaCapability(el) {
     return { mode: 'basic', reason: 'unknown-media-source' };
   }
 
-  if (activeAudioGraphCount >= MAX_ACTIVE_AUDIO_GRAPHS ||
-      (!el.xSoundFixerSource && frameAudioSourceCount >= MAX_FRAME_AUDIO_SOURCES)) {
-    return { mode: 'basic', reason: 'audio-resource-limit' };
-  }
   return { mode: 'full', reason: null };
 }
 
@@ -173,7 +174,7 @@ function initializeAudioGraph(el, elid) {
 
     // Create the source last so failures before this point cannot reroute audio.
     // A media element can only acquire a source once. Keep that source usable
-    // on detach/reinsert, and bound lifetime sources even if the page retains them.
+    // on detach/reinsert. A frame's past videos must not exhaust future playback.
     if (!source) {
       source = context.createMediaElementSource(el);
       frameAudioSourceCount += 1;
@@ -393,6 +394,12 @@ function applySettingsToElement(el, updates) {
 
   const pendingSettings = el.xSoundFixerPendingSettings || {};
   delete el.xSoundFixerPendingSettings;
+  if (!isMediaPlaying(el) && !el.xSoundFixerGain) {
+    // Feed players often preload many paused videos. Remember their controls,
+    // but allocate processing nodes only when playback starts.
+    el.xSoundFixerSettings = mergeSettings(el.xSoundFixerSettings, { ...pendingSettings, ...updates });
+    return { success: true, applied: true, settings: { ...el.xSoundFixerSettings }, capability };
+  }
   return applyFullSettings(el, elid, { ...pendingSettings, ...updates });
 }
 
@@ -477,9 +484,75 @@ function applyShortcut(command, resetSettings) {
   return { success: true, applied: media.some(result => result?.applied), settings: { ...frameSettings } };
 }
 
+function applyFrameSettings(updates) {
+  // A popup can outlive any individual player on an SPA. Resolve the live
+  // media here, and keep the requested frame settings across replacement gaps.
+  scanMediaElements();
+  frameSettings = mergeSettings(frameSettings, updates);
+  hasUserSettings = true;
+  const results = [...activeMediaElements.values()].map(el => applySettingsToElement(el, frameSettings));
+  notifyBadge(frameSettings, frameDisabled);
+  return {
+    success: results.every(result => result.success === true),
+    applied: results.some(result => result.applied === true),
+    settings: { ...frameSettings },
+    media: Object.fromEntries(getMediaSnapshot())
+  };
+}
+
 function isMediaElement(el) {
-  return el && (el.tagName === 'VIDEO' || el.tagName === 'AUDIO') &&
-    (typeof HTMLMediaElement === 'undefined' || el instanceof HTMLMediaElement);
+  if (!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return false;
+  if (typeof HTMLMediaElement === 'undefined') return true;
+  try {
+    // An adopted player keeps its original frame's prototype. instanceof
+    // rejects it in the new frame; the native getter checks the actual brand.
+    const pausedGetter = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'paused')?.get;
+    if (!pausedGetter) return el instanceof HTMLMediaElement;
+    pausedGetter.call(el);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isMediaPlaying(el) {
+  return !el.paused && !el.ended;
+}
+
+function collectMediaElements(root = document, shadowRoots = []) {
+  const elements = [...root.querySelectorAll('video, audio')];
+  // querySelectorAll does not cross a player's shadow boundary. Firefox gives
+  // extensions access to both open and closed roots without page-world code.
+  for (const host of root.querySelectorAll('*')) {
+    const shadow = host.openOrClosedShadowRoot || host.shadowRoot;
+    if (!shadow) continue;
+    shadowRoots.push(shadow);
+    elements.push(...collectMediaElements(shadow, shadowRoots));
+  }
+  return elements;
+}
+
+function handleMediaPlay(event) {
+  if (!isMediaElement(event.target)) return;
+  pruneRemovedMedia();
+  registerMediaElement(event.target);
+  scheduleSettingsRestore(event.target);
+  notifyMediaChanged();
+}
+
+function observeMediaRoots(shadowRoots) {
+  if (!mediaObserver) return;
+  // Rebuild from connected roots so removed feed widgets are not retained.
+  mediaObserver.disconnect();
+  const options = { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] };
+  for (const root of [document.body, ...shadowRoots]) {
+    if (!root) continue;
+    mediaObserver.observe(root, options);
+    if (!mediaEventRoots.has(root)) {
+      root.addEventListener('play', handleMediaPlay, true);
+      mediaEventRoots.add(root);
+    }
+  }
 }
 
 function getMediaId(el) {
@@ -487,7 +560,13 @@ function getMediaId(el) {
 }
 
 function assignMediaId(el) {
-  if (!activeMediaElements.has(getMediaId(el)) && activeMediaElements.size >= MAX_TRACKED_MEDIA_ELEMENTS) return null;
+  if (!activeMediaElements.has(getMediaId(el)) && activeMediaElements.size >= MAX_TRACKED_MEDIA_ELEMENTS) {
+    const inactive = [...activeMediaElements.values()].find(candidate => !isMediaPlaying(candidate));
+    if (inactive) releaseMediaElement(inactive);
+    // Bound idle bookkeeping, not playback. Hidden feed players can remain
+    // unpaused; their number must never prevent a new player from working.
+    else if (!isMediaPlaying(el)) return null;
+  }
   if (!mediaIds.has(el)) mediaIds.set(el, `sa-${++nextMediaId}`);
   const id = getMediaId(el);
   activeMediaElements.set(id, el);
@@ -502,6 +581,10 @@ function resolveMediaElement(id) {
 
 function releaseMediaElement(el) {
   activeMediaElements.delete(getMediaId(el));
+  releaseAudioGraph(el);
+}
+
+function releaseAudioGraph(el) {
   clearTimeout(el.xSoundFixerRestoreTimer);
   if (!el.xSoundFixerGain) return;
   // Closing the context or disconnecting the source alone would silence this
@@ -523,7 +606,16 @@ function pruneRemovedMedia() {
     if (el.isConnected === false) {
       releaseMediaElement(el);
       changed = true;
+    } else if (!isMediaPlaying(el) && el.xSoundFixerGain) {
+      releaseAudioGraph(el);
+      changed = true;
     }
+  }
+  while (activeMediaElements.size > MAX_TRACKED_MEDIA_ELEMENTS) {
+    const inactive = [...activeMediaElements.values()].find(el => !isMediaPlaying(el));
+    if (!inactive) break;
+    releaseMediaElement(inactive);
+    changed = true;
   }
   return changed;
 }
@@ -532,6 +624,7 @@ function notifyMediaChanged() {
   if (mediaChangeTimer !== null) return;
   mediaChangeTimer = setTimeout(() => {
     mediaChangeTimer = null;
+    scanMediaElements();
     browser.runtime.sendMessage({ action: 'mediaElementsChanged' }).catch(() => {});
   }, 50);
 }
@@ -558,12 +651,22 @@ function registerMediaElement(el) {
   }
   registeredMediaElements.add(el);
 
-  el.addEventListener('loadstart', () => scheduleSettingsRestore(el));
-  el.addEventListener('loadedmetadata', () => scheduleSettingsRestore(el));
+  for (const event of ['loadstart', 'loadedmetadata']) {
+    el.addEventListener(event, () => {
+      scheduleSettingsRestore(el);
+      notifyMediaChanged();
+    });
+  }
   el.addEventListener('play', () => {
     resumeAudioContext(el);
     scheduleSettingsRestore(el);
   });
+  for (const event of ['pause', 'ended', 'emptied']) {
+    el.addEventListener(event, () => {
+      if (!isMediaPlaying(el)) releaseAudioGraph(el);
+      notifyMediaChanged();
+    });
+  }
   el.addEventListener('playing', () => resumeAudioContext(el));
   el.addEventListener('volumechange', () => resumeAudioContext(el));
 
@@ -590,14 +693,28 @@ function getMediaState(el) {
 
 function scanMediaElements() {
   pruneRemovedMedia();
-  let inspected = 0;
-  for (const el of document.querySelectorAll('video, audio')) {
-    if (inspected++ >= MAX_TRACKED_MEDIA_ELEMENTS) break;
+  const shadowRoots = [];
+  const elements = collectMediaElements(document, shadowRoots);
+  observeMediaRoots(shadowRoots);
+  // Playing media can be after a feed's retained or preloaded DOM players.
+  for (const el of elements.filter(isMediaPlaying)) {
     registerMediaElement(el);
   }
-  const result = new Map();
-  for (const [id, el] of activeMediaElements) result.set(id, getMediaState(el));
-  return result;
+  for (const el of elements) {
+    if (activeMediaElements.size >= MAX_TRACKED_MEDIA_ELEMENTS) break;
+    if (!activeMediaElements.has(getMediaId(el))) registerMediaElement(el);
+  }
+  return getMediaSnapshot();
+}
+
+function getMediaSnapshot() {
+  // IPC/UI payloads stay bounded. Settings still reach every tracked playing
+  // element; return recent playing media first so a new feed player is visible.
+  const entries = [...activeMediaElements].reverse();
+  const prioritized = [...entries.filter(([, el]) => isMediaPlaying(el)),
+    ...entries.filter(([, el]) => !isMediaPlaying(el))];
+  return new Map(prioritized.slice(0, MAX_SCANNED_MEDIA_ELEMENTS)
+    .map(([id, el]) => [id, getMediaState(el)]));
 }
 
 async function loadInitialSettings() {
@@ -637,6 +754,10 @@ async function loadSiteExceptionStatus() {
 async function handleMessage(message) {
   try {
     if (initializationPromise) await initializationPromise;
+    if (!siteExceptionKnown && message.action !== 'setSiteDisabled') {
+      await loadSiteExceptionStatus();
+      if (siteExceptionKnown && !hasUserSettings) await loadInitialSettings();
+    }
 
     switch (message.action) {
       case 'scanMedia': {
@@ -649,6 +770,9 @@ async function handleMessage(message) {
 
       case 'applySettings':
         return applySettings(message.elid, message.settings);
+
+      case 'applyFrameSettings':
+        return applyFrameSettings(message.settings);
 
       case 'getAudioLevel': {
         const el = resolveMediaElement(message.elid);
@@ -701,10 +825,9 @@ function registerMediaFromNode(node) {
     }
   }
 
-  if (node.querySelectorAll && activeMediaElements.size < MAX_TRACKED_MEDIA_ELEMENTS) {
-    const nestedMedia = node.querySelectorAll('video, audio');
+  if (node.querySelectorAll) {
+    const nestedMedia = collectMediaElements(node);
     for (const el of nestedMedia) {
-      if (activeMediaElements.size >= MAX_TRACKED_MEDIA_ELEMENTS) break;
       registerMediaElement(el);
     }
     mediaChanged = mediaChanged || nestedMedia.length > 0;
@@ -722,6 +845,9 @@ async function initialize() {
 	]);
   notifyBadge(frameSettings, frameDisabled);
   scanMediaElements();
+
+  // Capture play even for an element outside the bounded idle registry.
+  document.addEventListener('play', handleMediaPlay, true);
 
   const observer = new MutationObserver(mutations => {
     // Prune before registering additions so removed graphs free active slots.
@@ -744,16 +870,13 @@ async function initialize() {
           const parentMedia = target.closest('video, audio');
           if (parentMedia) scheduleSettingsRestore(parentMedia);
         }
+        notifyMediaChanged();
       }
     }
   });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['src']
-  });
+  mediaObserver = observer;
+  scanMediaElements();
 
   window.soundAdjusterObserver = observer;
 }

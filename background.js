@@ -85,7 +85,7 @@ async function applyCommandToTab(command, tab, targetFrameIds = null) {
 		}, { frameId: frame.frameId }).catch(() => null)
 	)));
 	const result = results.find(candidate => candidate?.success && candidate?.applied !== false && validSettings(candidate?.settings));
-	if (!result || results.some(candidate => candidate?.settings && (!candidate.success || candidate.applied === false || !validSettings(candidate.settings)))
+	if (!result || results.some(candidate => candidate?.settings && (!candidate.success || !validSettings(candidate.settings)))
 		|| targetFrameIds && (targetFrames.length !== targetFrameIds.length || results.some(candidate => !candidate?.success))) {
 		return { success: false };
 	}

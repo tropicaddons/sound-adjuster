@@ -56,6 +56,8 @@ let siteExceptionStatus = { eligible: false, siteKey: null, disabled: false };
 let namedProfilesStatus = { eligible: false, siteKey: null, profiles: [] };
 const frameMap = new Map();
 let referenceMediaKey = null;
+let frameScanDiagnostics = [];
+const frameRecoveryPromises = new Map();
 let currentControlsNode = null;
 const allElements = document.getElementById('all-elements');
 const elementsTpl = document.getElementById('elements-tpl');
@@ -89,6 +91,8 @@ const manageExceptionsButton = document.querySelector('.menu-manage-exceptions')
 let noMediaStateVisible = false;
 let autoMediaScanTimer = null;
 let autoMediaScanInFlight = false;
+let audioSettingsQueue = Promise.resolve();
+let mediaRefreshTimer = null;
 let levelMeterTimer = null;
 let profileOperationQueue = Promise.resolve();
 let profileFeedbackSequence = 0;
@@ -128,17 +132,36 @@ async function sendUiMessage(message) {
 	return result;
 }
 
-function sendProfileMessage(action, settings) {
+async function refreshPopupTabContext() {
+	const tab = await browser.tabs.get(activeTab.id);
+	const siteKey = value => {
+		const url = new URL(value);
+		return ['http:', 'https:'].includes(url.protocol)
+			? `${url.hostname.toLowerCase().replace(/^www\./, '')}${url.port ? `:${url.port}` : ''}` : null;
+	};
+	// SPA navigation may change a video path/query while keeping the same site.
+	// Never carry the popup's settings across a different site or private context.
+	if (tab.id !== activeTab.id || siteKey(tab.url) !== siteKey(activeTab.url)
+		|| (tab.incognito === true) !== (activeTab.incognito === true)) {
+		throw new Error('The active site changed; reopen Sound Adjuster');
+	}
+	activeTab = tab;
+}
+
+async function sendProfileMessage(action, settings) {
+	await refreshPopupTabContext();
 	return sendUiMessage({
 		action,
 		tabId: activeTab?.id,
 		tabUrl: activeTab?.url,
 		incognito: activeTab?.incognito === true,
-		settings
+		// Reads/removals must not include fields reserved for profile saves.
+		...(action === 'saveSiteProfile' ? { settings } : {})
 	});
 }
 
-function sendContextMessage(action, details = {}) {
+async function sendContextMessage(action, details = {}) {
+	await refreshPopupTabContext();
 	return sendUiMessage({
 		action,
 		tabId: activeTab?.id,
@@ -460,12 +483,12 @@ function updateSiteFooter() {
 
 	siteHostname.textContent = siteKey;
 	siteHostname.title = siteKey;
-	moreMenuWrap.hidden = noMediaStateVisible;
-	if (noMediaStateVisible) setMoreMenuOpen(false);
+	moreMenuWrap.hidden = false;
 
 	const profileEligible = siteProfileStatus?.eligible === true;
 	const hasEditableControls = Boolean(currentControlsNode) && siteExceptionStatus?.disabled !== true;
-	siteProfileToggle.hidden = !profileEligible || (!hasEditableControls && siteProfileStatus?.remembered !== true);
+	siteProfileToggle.hidden = noMediaStateVisible || !profileEligible
+		|| (!hasEditableControls && siteProfileStatus?.remembered !== true);
 	rememberSite.checked = siteProfileStatus?.remembered === true;
 
 	disableSiteButton.disabled = siteExceptionStatus?.eligible !== true;
@@ -513,16 +536,39 @@ async function persistCurrentProfile() {
 }
 
 function applySettingsToAllMedia(settings) {
-	const operations = [];
-	for (const [fid, elements] of frameMap) {
-		for (const [elid] of elements) {
-			operations.push(applySettings(fid, elid, settings));
-		}
-	}
-	return Promise.all(operations).then(results => {
-		if (results.some(result => result?.success !== true)) throw new Error('Audio settings were not applied');
+	const updates = { ...settings };
+	const operation = audioSettingsQueue.then(async () => {
+		const sendToCurrentFrames = async () => {
+			const frames = await scanMedia();
+			if (frames.some(frame => !frame.available && frameMap.get(frame.frameId)?.size)) {
+				throw new Error('Unable to reach the current media frame');
+			}
+			return Promise.all(frames.filter(frame => frame.available).map(async frame => {
+				try {
+					const result = await browser.tabs.sendMessage(tid, {
+						action: 'applyFrameSettings', settings: updates
+					}, { frameId: frame.frameId });
+					if (result?.success !== true) throw new Error(result?.error || 'Audio settings were not applied');
+					return result;
+				} catch (error) {
+					const liveFrames = await browser.webNavigation.getAllFrames({ tabId: tid });
+					if (!liveFrames.some(live => live.frameId === frame.frameId)) return { success: true, frameRemoved: true };
+					throw error;
+				}
+			}));
+		};
+		let results = await sendToCurrentFrames();
+		// An iframe may be replaced between enumeration and delivery. Retry the
+		// current frame set once, rather than sending to removed player IDs.
+		if (results.some(result => result.frameRemoved)) results = await sendToCurrentFrames();
 		return results;
+	}).catch(error => {
+		console.warn('Unable to apply current frame settings:', error);
+		setFooterFeedback('Couldn’t apply audio settings', 'error');
+		throw error;
 	});
+	audioSettingsQueue = operation.catch(() => {});
+	return operation;
 }
 
 function buildDiagnosticsText() {
@@ -555,6 +601,7 @@ function buildDiagnosticsText() {
 		`Named profiles: ${(namedProfilesStatus.profiles || []).length}`,
 		`Active named profile: ${activeNamedProfile?.builtIn ? 'Default' : activeNamedProfile ? 'Saved profile' : 'Custom'}`,
 		`Frames scanned: ${frameMap.size}`,
+		`Frame scan results: ${frameScanDiagnostics.map(frame => `${frame.frameId}:${frame.scanStatus}${frame.scanError ? `(${frame.scanError})` : ''}`).join(', ') || 'none'}`,
 		`Media elements: ${mediaCount}`,
 		`Capabilities: ${formatCounts(capabilities)}`,
 		`Reasons: ${formatCounts(reasons)}`,
@@ -757,7 +804,9 @@ function showNoMediaState() {
 	allElements.classList.add('is-empty');
 	allElements.appendChild(createEmptyState(
 		'No media available',
-		'Start playing audio or video. It will appear here automatically.'
+		frameScanDiagnostics.some(frame => frame.scanStatus === 'incompatible-response')
+			? 'Reload this tab to finish updating Sound Adjuster, then open it again.'
+			: 'Start playing audio or video. It will appear here automatically.'
 	));
 	scheduleAutoMediaScan();
 	updateSiteFooter();
@@ -766,8 +815,8 @@ function showNoMediaState() {
 function showUnavailableMediaState(capability) {
 	stopLevelMonitoring();
 	const descriptions = {
-		'audio-resource-limit': 'This page has reached the audio processing limit. Playback continues normally. Reload the tab to process new media.',
-		'site-exception-unavailable': 'Sound Adjuster could not check your disabled-site preferences. Reload the tab to try again.',
+		'audio-resource-limit': 'Too many media players are playing at once. Pause other players and scan again to adjust this one.',
+		'site-exception-unavailable': 'Sound Adjuster could not check your disabled-site preferences. Scan again to retry.',
 		'site-restricted': 'This site prevents Sound Adjuster from safely accessing its audio. Playback continues normally.',
 		'cross-origin-media': 'Firefox blocks the audio access needed for this media source. Playback continues normally.',
 		'protected-media': 'This media uses protected playback, so Firefox does not allow extensions to adjust its audio. Playback continues normally.',
@@ -787,6 +836,13 @@ function showUnavailableMediaState(capability) {
 	updateSiteFooter();
 }
 
+function selectReferenceMedia(entries) {
+	const editable = entry => ['full', 'pending'].includes(entry.media.capability?.mode);
+	return entries.find(entry => entry.media.isPlaying && editable(entry))
+		|| entries.find(entry => entry.media.isPlaying)
+		|| entries.find(editable) || entries[0];
+}
+
 function showSiteDisabledState() {
 	stopLevelMonitoring();
 	currentControlsNode = null;
@@ -800,31 +856,6 @@ function showSiteDisabledState() {
 		false
 	));
 	updateSiteFooter();
-}
-
-function applySettings(fid, elid, newSettings) {
-	return browser.tabs.sendMessage(tid, {
-		action: "applySettings",
-		elid: elid,
-		settings: newSettings
-	}, { frameId: fid }).then(result => {
-		if (result?.success !== true) throw new Error(result?.error || 'Audio settings were not applied');
-		const capability = result?.capability;
-		if (`${fid}:${elid}` === referenceMediaKey && capability) {
-			if (capability.mode === 'disabled') {
-				if (capability.reason === 'site-exception-unavailable') showUnavailableMediaState(capability);
-				else showSiteDisabledState();
-			}
-			if (capability.mode === 'basic' || capability.mode === 'unsupported') {
-				showUnavailableMediaState(capability);
-			}
-		}
-		return result;
-	}).catch(err => {
-		console.error(`Failed to apply settings to element ${elid}:`, err);
-		setFooterFeedback('Couldn’t apply audio settings', 'error');
-		return { success: false, error: err.message };
-	});
 }
 
 function stopLevelMonitoring() {
@@ -883,20 +914,56 @@ function sanitizeScannedMedia(candidate) {
 	return result;
 }
 
+async function recoverMediaFrame(frameId) {
+	const previous = frameRecoveryPromises.get(frameId);
+	if (!previous || previous.finishedAt && Date.now() - previous.finishedAt >= 5000) {
+		const attempt = { finishedAt: null };
+		attempt.promise = (async () => {
+			const target = { tabId: tid, frameIds: [frameId] };
+			// Probe the extension's isolated world, never page-provided state.
+			const probe = await browser.scripting.executeScript({ target,
+				func: () => globalThis.soundAdjusterContentLoaded === true });
+			if (probe[0]?.error) throw new Error(String(probe[0].error));
+			if (probe[0]?.result === true) throw new Error('content-script-already-loaded');
+			const injected = await browser.scripting.executeScript({ target, files: ['content.js'] });
+			if (injected[0]?.error) throw new Error(String(injected[0].error));
+		})();
+		frameRecoveryPromises.set(frameId, attempt);
+		attempt.promise.then(() => frameRecoveryPromises.delete(frameId), () => { attempt.finishedAt = Date.now(); });
+	}
+	return frameRecoveryPromises.get(frameId).promise;
+}
+
+function describeFrameError(error) {
+	const message = String(error?.message || error);
+	if (/content-script-already-loaded/.test(message)) return 'listener-unavailable';
+	if (/permission|access|denied|not allowed|restricted/i.test(message)) return 'access-denied';
+	if (/frame|document|tab.*closed|no matching/i.test(message)) return 'frame-unavailable';
+	return 'injection-failed';
+}
+
 function scanMedia() {
 	return browser.webNavigation.getAllFrames({ tabId: tid }).then(frames => {
 		return Promise.all(frames.slice(0, MAX_SCANNED_FRAMES).map(frame =>
 			browser.tabs.sendMessage(tid, { action: "scanMedia" }, { frameId: frame.frameId })
+			.catch(async () => {
+				await recoverMediaFrame(frame.frameId);
+				return browser.tabs.sendMessage(tid, { action: 'scanMedia' }, { frameId: frame.frameId });
+			})
 			.then(result => {
+				const media = result?.success === true ? sanitizeScannedMedia(result.media) : {};
+				const incompatible = result?.success === true && Object.keys(result.media || {}).length > 0 && Object.keys(media).length === 0;
 				return {
 					frameId: frame.frameId,
-					media: result?.success === true ? sanitizeScannedMedia(result.media) : {}
+					available: result?.success === true,
+					scanStatus: incompatible ? 'incompatible-response' : result?.success === true ? 'ready' : 'scan-failed',
+					media
 				};
 			}).catch(err => {
 				console.warn(`Unable to scan frame ${frame.frameId}:`, err.message);
-				return { frameId: frame.frameId, media: {} };
+				return { frameId: frame.frameId, available: false, scanStatus: 'no-response', scanError: describeFrameError(err), media: {} };
 			})
-		));
+		)).then(results => { frameScanDiagnostics = results; return results; });
 	});
 }
 
@@ -953,6 +1020,32 @@ async function scanForNewMedia() {
 	}
 }
 
+function scheduleMediaRefresh() {
+	if (mediaRefreshTimer !== null) return;
+	mediaRefreshTimer = setTimeout(async () => {
+		mediaRefreshTimer = null;
+		try {
+			await audioSettingsQueue;
+			const frames = await scanMedia();
+			const entries = frames.flatMap(frame => Object.entries(frame.media || {}).map(([id, media]) => ({
+				key: `${frame.frameId}:${id}`, media
+			})));
+			const reference = selectReferenceMedia(entries);
+			if (currentControlsNode && reference?.key === referenceMediaKey
+				&& ['full', 'pending'].includes(reference.media.capability?.mode)) {
+				// Keep an active slider/text field intact when only a preview player changed.
+				frameMap.clear();
+				for (const frame of frames) frameMap.set(frame.frameId, new Map(Object.entries(frame.media || {})));
+				updateSiteFooter();
+			} else {
+				renderFrameResults(frames);
+			}
+		} catch (error) {
+			console.warn('Unable to refresh current media:', error);
+		}
+	}, 50);
+}
+
 function renderFrameResults(frameResults) {
 		let elCount = 0;
 
@@ -979,7 +1072,7 @@ function renderFrameResults(frameResults) {
 				}
 			}
 
-			const referenceEntry = scannedMedia.find(entry => entry.media.isPlaying) || scannedMedia[0];
+			const referenceEntry = selectReferenceMedia(scannedMedia);
 			const referenceMedia = referenceEntry.media;
 			referenceMediaKey = `${referenceEntry.fid}:${referenceEntry.elid}`;
 
@@ -1012,11 +1105,7 @@ function renderFrameResults(frameResults) {
 			function applyGain (value, formatNumber = true) {
 				value = Math.max(0, Math.min(5, Number.parseFloat(value) || 0));
 				const boostSettings = { gain: value };
-				for (const [fid, els] of frameMap) {
-					for (const [elid, el] of els) {
-						applySettings(fid, elid, boostSettings);
-					}
-				}
+				applySettingsToAllMedia(boostSettings).catch(() => {});
 				gain.value = value;
 				if (formatNumber) gainNumberInput.value = value.toFixed(2);
 				renderNamedProfiles();
@@ -1040,11 +1129,7 @@ function renderFrameResults(frameResults) {
 			pan.style.display = 'inline-block';
 			pan.style.width = '100%';
 			function applyPan (value) {
-				for (const [fid, els] of frameMap) {
-					for (const [elid, el] of els) {
-						applySettings(fid, elid, { pan: value });
-					}
-				}
+				applySettingsToAllMedia({ pan: Number.parseFloat(value) }).catch(() => {});
 				pan.value = value;
 				panNumberInput.value = '' + value;
 			}
@@ -1064,20 +1149,12 @@ function renderFrameResults(frameResults) {
 
 			const mono = node.querySelector('.element-mono');
 			mono.addEventListener('change', _ => {
-				for (const [fid, els] of frameMap) {
-					for (const [elid, el] of els) {
-						applySettings(fid, elid, { mono: mono.checked });
-					}
-				}
+				applySettingsToAllMedia({ mono: mono.checked }).catch(() => {});
 			});
 
 			const flip = node.querySelector('.element-flip');
 			flip.addEventListener('change', _ => {
-				for (const [fid, els] of frameMap) {
-					for (const [elid, el] of els) {
-						applySettings(fid, elid, { flip: flip.checked });
-					}
-				}
+				applySettingsToAllMedia({ flip: flip.checked }).catch(() => {});
 			});
 
 			// Equalizer controls for all elements
@@ -1106,11 +1183,7 @@ function renderFrameResults(frameResults) {
 					setting[band] = value;
 
 					// Apply to all elements
-					for (const [fid, els] of frameMap) {
-						for (const [elid, el] of els) {
-							applySettings(fid, elid, setting);
-						}
-					}
+					applySettingsToAllMedia(setting).catch(() => {});
 
 					// Update value display
 					const valueDisplay = this.parentElement.querySelector('.band-value');
@@ -1178,17 +1251,13 @@ function renderFrameResults(frameResults) {
 					});
 
 					// Apply preset to all elements
-					for (const [fid, els] of frameMap) {
-						for (const [elid, el] of els) {
-							applySettings(fid, elid, {
-								eqBass: preset.bass,
-								eqLowMid: preset.lowMid,
-								eqMid: preset.mid,
-								eqHighMid: preset.highMid,
-								eqTreble: preset.treble
-							});
-						}
-					}
+					applySettingsToAllMedia({
+						eqBass: preset.bass,
+						eqLowMid: preset.lowMid,
+						eqMid: preset.mid,
+						eqHighMid: preset.highMid,
+						eqTreble: preset.treble
+					}).catch(() => {});
 
 					// Update active preset button
 					presetButtons.forEach(btn => btn.classList.remove('active'));
@@ -1251,11 +1320,15 @@ browser.runtime.onMessage.addListener((message, sender) => {
 		if (message.tabId === tid) syncControlsFromShortcut(message.settings);
 		return undefined;
 	}
-	if (message?.action !== 'mediaElementsChanged' || !noMediaStateVisible) return undefined;
+	if (message?.action !== 'mediaElementsChanged') return undefined;
 	if (sender.tab?.id !== tid) return undefined;
 
-	stopAutoMediaScan();
-	scheduleAutoMediaScan(0);
+	if (noMediaStateVisible) {
+		stopAutoMediaScan();
+		scheduleAutoMediaScan(0);
+	} else {
+		scheduleMediaRefresh();
+	}
 	return undefined;
 });
 
@@ -1263,6 +1336,7 @@ window.addEventListener('unload', stopAutoMediaScan);
 window.addEventListener('unload', stopLevelMonitoring);
 window.addEventListener('unload', () => {
 	clearTimeout(footerFeedbackTimer);
+	clearTimeout(mediaRefreshTimer);
 });
 
 browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
