@@ -37,6 +37,9 @@ const editShortcutsButton = document.querySelector('.edit-shortcuts');
 const showSupportButton = document.querySelector('.show-support-button');
 const supportPreferenceStatus = document.querySelector('.support-preference-status');
 const SUPPORT_BUTTON_KEY = 'soundAdjuster.showSupportButton';
+const POWER_BUTTON_KEY = 'soundAdjuster.showPowerButton';
+const showPowerButton = document.querySelector('.show-power-button');
+const powerPreferenceStatus = document.querySelector('.power-preference-status');
 const optionsIncognito = browser.extension?.inIncognitoContext;
 const audioDataUnavailable = optionsIncognito !== false;
 const clearAudioDataButton = document.querySelector('.clear-audio-data');
@@ -77,6 +80,31 @@ showSupportButton.addEventListener('change', async () => {
 		supportPreferenceStatus.textContent = 'Couldn’t save the support button preference.';
 	} finally {
 		showSupportButton.disabled = false;
+	}
+});
+
+async function loadPowerButtonPreference() {
+	try {
+		const stored = await browser.storage.local.get(POWER_BUTTON_KEY);
+		showPowerButton.checked = stored[POWER_BUTTON_KEY] !== false;
+	} catch (error) {
+		powerPreferenceStatus.textContent = 'Couldn’t load the power button preference.';
+	} finally {
+		showPowerButton.disabled = false;
+	}
+}
+
+showPowerButton.addEventListener('change', async () => {
+	const requested = showPowerButton.checked;
+	showPowerButton.disabled = true;
+	try {
+		await browser.storage.local.set({ [POWER_BUTTON_KEY]: requested });
+		powerPreferenceStatus.textContent = requested ? 'Power button shown.' : 'Power button hidden.';
+	} catch (error) {
+		showPowerButton.checked = !requested;
+		powerPreferenceStatus.textContent = 'Couldn’t save the power button preference.';
+	} finally {
+		showPowerButton.disabled = false;
 	}
 });
 
@@ -126,7 +154,12 @@ function renderGlobalSettings(result) {
 	updateDefaultsAvailability();
 }
 
-async function loadGlobalSettings() {
+async function loadGlobalSettings(preserveEdits = false) {
+	// Notifications must not replace an unfinished defaults form, including
+	// edits made while the asynchronous storage read is in flight.
+	const before = JSON.stringify({ enabled: loadedDefaultsEnabled, settings: loadedGlobalSettings });
+	const edited = () => JSON.stringify({ enabled: defaultsEnabled.checked, settings: readGlobalSettings() }) !== before;
+	if (preserveEdits && edited()) return;
 	if (audioDataUnavailable) {
 		renderGlobalSettings({ enabled: false });
 		setDefaultsStatus('Saved defaults are unavailable in private windows.');
@@ -134,6 +167,7 @@ async function loadGlobalSettings() {
 	}
 	try {
 		const result = await sendOptionsMessage('getGlobalSettings');
+		if (preserveEdits && edited()) return;
 		renderGlobalSettings(result);
 	} catch (error) {
 		console.warn('Unable to load default audio settings:', error);
@@ -156,6 +190,11 @@ function readGlobalSettings() {
 		flip: defaultFlip.checked,
 		...preset
 	});
+}
+
+for (const control of [defaultGain, defaultPan, defaultPreset, defaultMono, defaultFlip]) {
+	control.addEventListener('input', () => setDefaultsStatus('Unsaved changes.'));
+	control.addEventListener('change', () => setDefaultsStatus('Unsaved changes.'));
 }
 
 async function loadShortcutLabels() {
@@ -315,14 +354,15 @@ editShortcutsButton.addEventListener('click', async () => {
 browser.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== 'local') return;
 	if (changes['soundAdjuster.siteExceptions.v1']) loadExceptions();
-	if (changes['soundAdjuster.globalSettings.v1']) loadGlobalSettings();
+	if (changes['soundAdjuster.globalSettings.v1']) loadGlobalSettings(true);
 	if (changes[SUPPORT_BUTTON_KEY]) loadSupportPreference();
+	if (changes[POWER_BUTTON_KEY]) loadPowerButtonPreference();
 });
 
 browser.runtime.onMessage.addListener((message, sender) => {
 	if (sender.id !== browser.runtime.id || sender.tab || message?.action !== 'audioDataChanged') return undefined;
 	loadExceptions();
-	loadGlobalSettings();
+	loadGlobalSettings(true);
 	return undefined;
 });
 
@@ -330,3 +370,4 @@ loadExceptions();
 loadGlobalSettings();
 loadShortcutLabels();
 loadSupportPreference();
+loadPowerButtonPreference();

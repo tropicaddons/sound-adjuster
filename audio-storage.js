@@ -7,7 +7,7 @@
 	const META_STORE = 'metadata';
 	const MIGRATION_KEY = 'localStorageMigration.v1';
 	const PREFIXES = ['soundAdjuster.siteProfile.v1.', 'soundAdjuster.namedProfiles.v1.'];
-	const SINGLE_KEYS = new Set(['soundAdjuster.globalSettings.v1', 'soundAdjuster.siteExceptions.v1']);
+	const SINGLE_KEYS = new Set(['soundAdjuster.globalSettings.v1', 'soundAdjuster.siteExceptions.v1', 'soundAdjuster.power.v1']);
 
 	function isAudioKey(key) {
 		return typeof key === 'string' && (SINGLE_KEYS.has(key)

@@ -214,17 +214,25 @@ input[type="checkbox"] {
 }
 
 .defaults-status,
-.support-preference-status {
+.support-preference-status,
+.power-preference-status {
 	color: var(--muted);
 	font-size: 12px;
 }
 
-.support-preference-status:empty {
+.support-preference-status:empty,
+.power-preference-status:empty {
 	display: none;
 }
 
-.support-preference-status:not(:empty) {
+.support-preference-status:not(:empty),
+.power-preference-status:not(:empty) {
 	margin-top: 12px;
+}
+
+.appearance-options {
+	display: grid;
+	gap: 12px;
 }
 
 .defaults-status[data-state="error"] {

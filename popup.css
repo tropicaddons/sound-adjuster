@@ -103,6 +103,53 @@ header h1 {
 	letter-spacing: -0.02em;
 }
 
+#power-toggle {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	flex: 0 0 28px;
+	margin-right: 8px;
+	padding: 5px;
+	border: 1px solid transparent;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+	transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+#power-toggle[aria-pressed="true"] {
+	color: var(--accent);
+}
+
+#power-toggle[aria-pressed="false"]:not(:disabled) {
+	color: var(--muted);
+}
+
+#power-toggle[hidden] {
+	display: none;
+}
+
+#power-toggle:hover:not(:disabled) {
+	border-color: var(--border);
+	background: var(--surface-raised);
+}
+
+#power-toggle svg {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+}
+
+#power-status {
+	color: var(--danger);
+	margin: 0 0 12px;
+}
+
 .support-button,
 .github-button {
 	display: grid;
@@ -224,11 +271,18 @@ input:focus-visible {
 
 .element-reset,
 .preset-btn,
+.power-settings-button,
 .reload-button {
 	border: 1px solid var(--border);
 	background: var(--control-bg);
 	cursor: pointer;
 	transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.power-settings-button {
+	padding: 8px 12px;
+	border-radius: 6px;
+	font-size: 12px;
 }
 
 .element-reset {
@@ -1036,6 +1090,11 @@ input[type="checkbox"]:disabled + .switch-control {
 	font-size: 15px;
 	font-weight: 650;
 	letter-spacing: -0.01em;
+}
+
+.empty-state.is-power-off h2,
+.empty-state.is-site-off h2 {
+	color: var(--danger);
 }
 
 .empty-state p {

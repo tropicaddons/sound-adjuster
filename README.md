@@ -29,6 +29,8 @@ The demo lets you try the controls before installing. It processes a sample in y
 
 ## Settings
 
+Sound Adjuster starts **on by default**. The **power button** appears beside the popup title by default. To hide it, turn off **Show power button** under **Settings → Appearance**. Use it to turn processing off on every tab. Audio returns to normal while your gain, balance, EQ, mono, and channel-flip settings stay intact. Turn it back on to apply those settings again. Your last power choice stays saved across new tabs and browser restarts, so you only need to turn it on once. Reset and audio shortcuts are inactive while it is off. Remembered profiles, default audio settings, and disabled-site exceptions are preserved.
+
 Open the popup's footer menu (**…**) and choose **Settings and exceptions**. The settings page brings together default audio settings, keyboard shortcuts, appearance preferences, and your disabled-site list.
 
 Under **Default audio settings**, enable global defaults, choose your gain, stereo balance, equalizer preset, mono, and channel flip, then select **Save defaults**. These become the starting settings on supported sites without a remembered site profile. A remembered site profile takes priority; global defaults are not read in private windows.
@@ -70,7 +72,7 @@ Open the footer menu and choose **Profiles** to save or switch complete audio se
 
 ## Site exceptions and diagnostics
 
-Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately; after the tab reloads, Sound Adjuster skips creating an audio graph on that site. Manage or remove disabled sites from **Settings and exceptions**.
+Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately in all regular open tabs for that site; after a tab reloads, Sound Adjuster skips creating an audio graph on that site. Manage or remove disabled sites from **Settings and exceptions**.
 
 **Copy diagnostics** copies the extension version, capability summary, media count, current settings, and browser information. It omits hostnames, page paths, media source URLs, and custom profile names.
 
@@ -89,7 +91,9 @@ Allow website access for Sound Adjuster in Firefox's extension permissions. Audi
 
 The extension works with standard HTML audio and video elements. Some sites use cross-origin media or protected playback that Firefox does not allow extensions to process safely. In those cases, Sound Adjuster leaves playback unchanged and explains why its audio controls are unavailable.
 
-Each frame shares one audio context. Audio controls continue across long feeds and players that remain running in the background. Paused and removed media release their processing nodes; replaying or reinserting the same element reuses its source. Idle bookkeeping and media summaries are bounded to 128 entries, with recent playing media prioritized in summaries; settings still reach all tracked playing media. Tab scans cover up to 64 frames. If disabled-site preferences cannot be read, processing waits until a successful retry or reload.
+If an already processed player switches to a restricted source, Firefox can silence its existing audio connection. Turning processing off cannot detach that connection. **Reload to restore audio** reloads the page and pauses adjustments on that tab for the new page load, preserving saved settings and other tabs. Use the footer menu to enable adjustments again, or navigate/reload once more. The recovery notice remains available even when global power is off.
+
+Each frame shares one audio context. Audio controls continue across long feeds and players that remain running in the background. A brief pause keeps the processing chain ready for replay. Longer pauses release the filters and analysis nodes while retaining a small output gate to prevent unadjusted audio before settings are restored. Turning processing off lets normal audio through. Removed players release their processing nodes; replaying or reinserting the same element reuses its source. Idle bookkeeping and media summaries are bounded to 128 entries, with recent playing media prioritized in summaries; settings still reach all tracked playing media. Tab scans cover up to 64 frames. If disabled-site preferences cannot be read, processing waits until a successful retry or reload.
 
 ## Support
 

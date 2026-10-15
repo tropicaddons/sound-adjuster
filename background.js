@@ -12,7 +12,8 @@ const {
 	getSiteExceptionStatus,
 	listSiteExceptions,
 	removeSiteException,
-	removeSiteExceptionByKey
+	removeSiteExceptionByKey,
+	normalizeSiteKey
 } = globalThis.SoundAdjusterSiteExceptions;
 const {
 	getNamedProfiles,
@@ -44,6 +45,193 @@ const audioStorageReady = (async () => {
 	}
 })();
 
+const POWER_STATE_KEY = 'soundAdjuster.power.v1';
+let powerState = { eligible: false, enabled: false, revision: 0 };
+let powerChangeQueue = Promise.resolve();
+const playbackRecoveryTabs = new Map();
+// Own application and its acknowledged Remember write in the background: closing
+// the popup must not abandon either half of the operation.
+const popupAudioQueues = new Map();
+let popupAudioEpoch = 0;
+const popupAudioDocumentEpochs = new Map();
+function currentPopupAudioEpoch(epoch, tabId) {
+	return !epoch.cancelled && epoch.data === popupAudioEpoch && epoch.document === (popupAudioDocumentEpochs.get(tabId) || 0);
+}
+
+function invalidateSiteAudio(url, incognito) {
+	const siteKey = normalizeSiteKey(url);
+	for (const queue of popupAudioQueues.values()) {
+		for (const epoch of queue.epochs) {
+			if (epoch.siteKey === siteKey && epoch.incognito === incognito) epoch.cancelled = true;
+		}
+	}
+}
+
+function queuePopupAudio(message, sender, kind) {
+	const queue = popupAudioQueues.get(message.tabId) || { tail: Promise.resolve(), pending: null, epochs: new Set() };
+	const epoch = { data: popupAudioEpoch, document: popupAudioDocumentEpochs.get(message.tabId) || 0,
+		siteKey: normalizeSiteKey(message.tabUrl), incognito: message.incognito === true, cancelled: false };
+	// Collapse only requests which have not started; in-flight delivery owns an
+	// immutable settings snapshot. Merge fields so a gain drag cannot drop EQ.
+	if (queue.pending && !queue.pending.epoch.cancelled && queue.pending.epoch.data === epoch.data && queue.pending.epoch.document === epoch.document && queue.pending.request.tabUrl === message.tabUrl) {
+		Object.assign(queue.pending.request.settings, message.settings);
+		queue.pending.request.frameIds = [...new Set([...queue.pending.request.frameIds, ...message.frameIds])].slice(0, 64);
+		return queue.pending.result;
+	}
+	const request = { ...message, settings: { ...message.settings }, frameIds: [...message.frameIds] };
+	const pending = { request, epoch };
+	queue.epochs.add(epoch);
+	const result = queue.tail.then(() => {
+		if (queue.pending === pending) queue.pending = null;
+		return dispatchRequest(request, sender, kind, epoch);
+	});
+	pending.result = result;
+	queue.pending = pending;
+	const settled = result.catch(() => {});
+	queue.tail = settled;
+	popupAudioQueues.set(message.tabId, queue);
+	settled.then(() => {
+		queue.epochs.delete(epoch);
+		if (queue.tail === settled) popupAudioQueues.delete(message.tabId);
+	});
+	return result;
+}
+
+async function applyPopupAudio(message, context, storageArea, epoch) {
+	if (!currentPopupAudioEpoch(epoch, context.tab.id) || !(await getPowerState()).enabled) return { success: false };
+	const access = await effectiveSiteStatus(storageArea, context.tab.id, context.url, context.incognito);
+	if (access.disabled) return { success: false };
+	const profile = await getSiteProfile(storageArea, context.url, context.incognito);
+	const deliver = async () => {
+		const live = await browser.webNavigation.getAllFrames({ tabId: context.tab.id });
+		const frames = await Promise.all(live.filter(frame => validId(frame.frameId)).slice(0, 64).map(async frame => {
+			if (message.frameIds.includes(frame.frameId)) return frame;
+			// A newly inserted iframe may replace a scanned player. Discover its
+			// existing listener without adding a startup injection/recovery path.
+			const scan = await browser.tabs.sendMessage(context.tab.id, { action: 'scanMedia' },
+				{ frameId: frame.frameId }).catch(() => null);
+			return scan?.success === true ? frame : null;
+		}));
+		return Promise.all(frames.filter(Boolean).map(async frame => {
+			try {
+				return await browser.tabs.sendMessage(context.tab.id,
+					{ action: 'applyFrameSettings', settings: message.settings }, { frameId: frame.frameId });
+			} catch (error) {
+				const current = await browser.webNavigation.getAllFrames({ tabId: context.tab.id }).catch(() => null);
+				if (current && !current.some(candidate => candidate.frameId === frame.frameId)) return { frameRemoved: true };
+				return { success: false, applied: false, error: String(error) };
+			}
+		}));
+	};
+	let results = await deliver();
+	if (results.some(result => result?.frameRemoved)) results = await deliver();
+	const applied = results.find(result => result?.applied === true && validSettings(result.settings));
+	const success = results.length > 0 && results.every(result => result?.success === true);
+	if (!success && !applied) return { success: false, results };
+	let rememberError = false;
+	// Recheck after slow frame acknowledgements. A removal/clear/navigation or
+	// private context change must not resurrect a forgotten profile.
+	const tab = await browser.tabs.get(context.tab.id).catch(() => null);
+	if (profile.remembered && applied && currentPopupAudioEpoch(epoch, context.tab.id) && tab
+		&& tab.url === context.url && (tab.incognito === true) === context.incognito
+		&& (await getPowerState()).enabled
+		&& !(await effectiveSiteStatus(storageArea, tab.id, tab.url, context.incognito)).disabled) {
+		// Reserve the shared write queue before yielding again. An OFF/remove/clear
+		// request received afterwards is ordered after this write, and wins.
+		if (currentPopupAudioEpoch(epoch, context.tab.id)) {
+			try {
+				await saveSiteProfile(storageArea, context.url, applied.settings, context.incognito);
+				await notifyAudioDataChanged();
+			} catch (error) {
+				rememberError = true;
+				console.warn('Unable to save the applied site settings:', error);
+			}
+		}
+	}
+	return { success: success || Boolean(applied), partial: !success, rememberError, results };
+}
+
+async function effectiveSiteStatus(storageArea, tabId, url, incognito) {
+	const status = await getSiteExceptionStatus(storageArea, url, incognito);
+	return playbackRecoveryTabs.has(tabId) ? { ...status, disabled: true, temporary: true } : status;
+}
+const powerStateReady = (async () => {
+	try {
+		const storageArea = await audioStorageReady;
+		if (!storageArea) return;
+		const stored = await storageArea.get(POWER_STATE_KEY);
+		const saved = stored?.[POWER_STATE_KEY];
+		powerState = { eligible: true, enabled: saved?.enabled !== false,
+			revision: validId(saved?.revision) ? saved.revision : 0 };
+	} catch (error) {
+		console.warn('Unable to read Sound Adjuster power state:', error);
+	}
+	await browser.action.setBadgeText({ text: powerState.enabled ? '' : 'OFF' }).catch(() => {});
+})();
+
+async function getPowerState() {
+	await powerStateReady;
+	if (!powerState.eligible) {
+		const storageArea = await audioStorageReady;
+		if (storageArea) {
+			try {
+				const stored = await storageArea.get(POWER_STATE_KEY);
+				const saved = stored?.[POWER_STATE_KEY];
+				if (!powerState.eligible) {
+					powerState = { eligible: true, enabled: saved?.enabled !== false,
+						revision: validId(saved?.revision) ? saved.revision : 0 };
+				}
+			} catch (error) { console.warn('Unable to retry the power state:', error); }
+		}
+	}
+	return { ...powerState };
+}
+
+function setPowerState(enabled) {
+	const operation = powerChangeQueue.then(async () => {
+		await powerStateReady;
+		const storageArea = await audioStorageReady;
+		if (!storageArea) return { success: false, ...powerState };
+		const revision = powerState.revision + 1;
+		await globalThis.SoundAdjusterStorageWrites.enqueueStorageWrite(storageArea, () => (
+			storageArea.set({ [POWER_STATE_KEY]: { version: 1, enabled, revision } })
+		));
+		powerState = { eligible: true, enabled, revision };
+		await browser.action.setBadgeText({ text: enabled ? '' : 'OFF' }).catch(() => {});
+		const tabs = await browser.tabs.query({});
+		let synchronized = true;
+		await Promise.all(tabs.map(async tab => {
+			// A tab can close after enumeration. Cosmetic badge failure must not
+			// abort power delivery to the remaining tabs or its completion event.
+			await updateBadge(tab.id, null, !enabled).catch(() => {});
+			const frames = await browser.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => []);
+			// Power applies to every frame, including players beyond the popup's scan limit.
+			const results = await Promise.all((frames || []).filter(frame => validId(frame.frameId)).map(frame => (
+				browser.tabs.sendMessage(tab.id, { action: 'setPowerEnabled', enabled, revision },
+					{ frameId: frame.frameId }).catch(() => null).then(async result => {
+					if (result?.success === true) return result;
+					// Only confirmed, still-processed audio warrants a warning. Empty,
+					// restricted or removed frames are not failed media players.
+					const live = await browser.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => []);
+					if (!live?.some(current => current.frameId === frame.frameId)) return null;
+					try {
+						const probe = await browser.scripting.executeScript({ target: { tabId: tab.id, frameIds: [frame.frameId] },
+							func: (enabled, revision) => typeof globalThis.soundAdjusterPowerNeedsSync === 'function'
+								&& globalThis.soundAdjusterPowerNeedsSync(enabled, revision), args: [enabled, revision] });
+						return probe.some(entry => entry.result === true) ? { success: false } : null;
+					} catch (_) { return null; }
+				})
+			)));
+			if (results.some(result => result && result.success !== true)) synchronized = false;
+		}));
+		powerState = { ...powerState, synchronized };
+		await browser.runtime.sendMessage({ action: 'powerStateChanged', ...powerState, synchronized }).catch(() => {});
+		return { success: true, ...powerState, synchronized };
+	});
+	powerChangeQueue = operation.catch(() => {});
+	return operation;
+}
+
 function formatBadge(settings, disabled = false) {
 	if (disabled) return 'OFF';
 	if (settings?.mono === true) return 'M';
@@ -58,12 +246,16 @@ function formatBadge(settings, disabled = false) {
 
 async function updateBadge(tabId, settings, disabled = false) {
 	if (!Number.isInteger(tabId)) return;
+	await powerStateReady;
+	disabled = disabled || !powerState.enabled;
 	const text = formatBadge(settings, disabled);
 	await browser.action.setBadgeBackgroundColor({ tabId, color: disabled ? '#77777d' : '#ff6b35' });
 	await browser.action.setBadgeText({ tabId, text });
 }
 
 async function applyCommandToTab(command, tab, targetFrameIds = null) {
+	await powerChangeQueue;
+	if (!(await getPowerState()).enabled) return { success: false, disabled: true };
 	const storageArea = await audioStorageReady;
 	if (!storageArea) return { success: false };
 	if (!validId(tab?.id)) return { success: false };
@@ -121,9 +313,11 @@ async function applyCommandToTab(command, tab, targetFrameIds = null) {
 	return { success: true, settings: result.settings };
 }
 
-const CONTENT_ACTIONS = new Set(['getSiteProfile', 'getGlobalSettings', 'getSiteExceptionStatus', 'updateBadge']);
+const CONTENT_ACTIONS = new Set(['getPowerState', 'getSiteProfile', 'getGlobalSettings', 'getSiteExceptionStatus', 'updateBadge']);
 const POPUP_ACTIONS = new Set([
-	'resetAudio', 'getSiteProfile', 'saveSiteProfile', 'removeSiteProfile',
+	'applyPopupAudio',
+	'getPowerState', 'setPowerState', 'resetAudio', 'getSiteProfile', 'saveSiteProfile', 'removeSiteProfile',
+	'recoverMediaPlayback',
 	'getNamedProfiles', 'saveNamedProfile', 'removeNamedProfile',
 	'getGlobalSettings', 'getSiteExceptionStatus', 'addSiteException', 'removeSiteException'
 ]);
@@ -132,6 +326,8 @@ const OPTIONS_ACTIONS = new Set([
 	'removeSiteExceptionByKey', 'clearSiteExceptions', 'clearAudioData'
 ]);
 const ACTION_FIELDS = {
+	applyPopupAudio: ['settings', 'frameIds'],
+	setPowerState: ['enabled'],
 	resetAudio: ['frameIds'], saveSiteProfile: ['settings'],
 	saveNamedProfile: ['name', 'settings'], removeNamedProfile: ['profileId'],
 	saveGlobalSettings: ['enabled', 'settings'], updateBadge: ['settings', 'disabled'],
@@ -145,6 +341,19 @@ const AUDIO_MUTATIONS = new Set([
 
 async function notifyAudioDataChanged() {
 	await browser.runtime.sendMessage({ action: 'audioDataChanged' }).catch(() => {});
+}
+
+async function notifySiteAccessChanged(storageArea) {
+	const tabs = await browser.tabs.query({});
+	await Promise.all(tabs.filter(tab => validId(tab.id) && normalizeSiteKey(tab.url)).map(async tab => {
+		const status = await effectiveSiteStatus(storageArea, tab.id, tab.url, tab.incognito === true);
+		if (!status.eligible) return;
+		const frames = await browser.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => []);
+		await Promise.all((frames || []).filter(frame => validId(frame.frameId)).map(frame => (
+			browser.tabs.sendMessage(tab.id, { action: 'setSiteDisabled', disabled: status.disabled },
+				{ frameId: frame.frameId }).catch(() => undefined)
+		)));
+	}));
 }
 
 function validId(value) {
@@ -174,6 +383,7 @@ function validMessage(message, kind) {
 	if ('tabUrl' in message && (typeof message.tabUrl !== 'string' || message.tabUrl.length > 8192)) return false;
 	if ((ACTION_FIELDS[message.action] || []).includes('settings') && !validSettings(message.settings)) return false;
 	if (message.action === 'saveGlobalSettings' && typeof message.enabled !== 'boolean') return false;
+	if (message.action === 'setPowerState' && typeof message.enabled !== 'boolean') return false;
 	if (message.action === 'updateBadge' && typeof message.disabled !== 'boolean') return false;
 	if ('frameIds' in message && (!Array.isArray(message.frameIds) || message.frameIds.length > 64
 		|| !message.frameIds.every(validId) || new Set(message.frameIds).size !== message.frameIds.length)) return false;
@@ -186,13 +396,17 @@ function validMessage(message, kind) {
 	return true;
 }
 
-async function dispatchRequest(message, sender, kind) {
+async function dispatchRequest(message, sender, kind, audioEpoch) {
 	const storageArea = await audioStorageReady;
 	if (!storageArea) return invalidRequest();
 	let context;
 	if (kind === 'popup') {
 		const tab = await browser.tabs.get(message.tabId).catch(() => null);
-		if (!tab || tab.id !== message.tabId || ('tabUrl' in message && message.tabUrl !== tab.url)) return invalidRequest();
+		const sameAudioSite = message.action === 'applyPopupAudio' && normalizeSiteKey(tab?.url)
+			&& normalizeSiteKey(tab.url) === normalizeSiteKey(message.tabUrl)
+			&& (tab.incognito === true) === message.incognito;
+		if (!tab || tab.id !== message.tabId || ('tabUrl' in message && message.tabUrl !== tab.url && !sameAudioSite)
+			|| message.action === 'applyPopupAudio' && (tab.incognito === true) !== message.incognito) return invalidRequest();
 		context = { url: tab.url, incognito: tab.incognito === true, tab };
 	} else if (kind === 'content') {
 		// Child frames inherit the top-level tab's site policy, never a URL from the payload.
@@ -211,7 +425,31 @@ async function dispatchRequest(message, sender, kind) {
 		return { eligible: false, sites: [], success: false };
 	}
 
+	// Only the affected site loses its pending Remember writes. Clearing all data
+	// or changing global power invalidates every pending operation.
+	if (['removeSiteProfile', 'addSiteException', 'resetAudio'].includes(message.action)) {
+		invalidateSiteAudio(context.url, context.incognito);
+	}
+	if (message.action === 'setPowerState' || message.action === 'clearAudioData' && !context.incognito) popupAudioEpoch += 1;
 	switch (message.action) {
+		case 'applyPopupAudio':
+			return applyPopupAudio(message, context, storageArea, audioEpoch);
+		case 'getPowerState':
+			return getPowerState();
+		case 'setPowerState':
+			return setPowerState(message.enabled);
+		case 'recoverMediaPlayback': {
+			const tabId = context.tab.id;
+			const previous = playbackRecoveryTabs.get(tabId);
+			playbackRecoveryTabs.set(tabId, { awaitingReload: true });
+			try { await browser.tabs.reload(tabId); }
+			catch (error) {
+				if (previous) playbackRecoveryTabs.set(tabId, previous);
+				else playbackRecoveryTabs.delete(tabId);
+				throw error;
+			}
+			return { success: true };
+		}
 		case 'resetAudio':
 			return applyCommandToTab('reset-audio', context.tab, message.frameIds);
 		case 'getSiteProfile':
@@ -254,10 +492,11 @@ async function dispatchRequest(message, sender, kind) {
 		case 'updateBadge':
 			return updateBadge(sender.tab?.id, message.settings, message.disabled);
 		case 'getSiteExceptionStatus':
-			return getSiteExceptionStatus(storageArea, context.url, context.incognito);
+			return effectiveSiteStatus(storageArea, context.tab?.id ?? sender.tab?.id, context.url, context.incognito);
 		case 'addSiteException':
 			return addSiteException(storageArea, context.url, context.incognito);
 		case 'removeSiteException':
+			playbackRecoveryTabs.delete(context.tab.id);
 			return removeSiteException(storageArea, context.url, context.incognito);
 		case 'listSiteExceptions':
 			return listSiteExceptions(storageArea);
@@ -290,8 +529,15 @@ browser.runtime.onMessage.addListener((message, sender) => {
 	const actions = kind === 'popup' ? POPUP_ACTIONS : kind === 'options' ? OPTIONS_ACTIONS : CONTENT_ACTIONS;
 	if (!actions.has(message.action)) return undefined;
 	if (!validMessage(message, kind)) return invalidRequest();
+	if (message.action === 'applyPopupAudio') {
+		if (!Array.isArray(message.frameIds) || !message.frameIds.length) return invalidRequest();
+		return queuePopupAudio(message, sender, kind);
+	}
 	return dispatchRequest(message, sender, kind).then(async result => {
 		if (AUDIO_MUTATIONS.has(message.action) && result && result.eligible !== false && result.success !== false) {
+			if (['addSiteException', 'removeSiteException', 'removeSiteExceptionByKey', 'clearSiteExceptions', 'clearAudioData'].includes(message.action)) {
+				await notifySiteAccessChanged(await audioStorageReady);
+			}
 			await notifyAudioDataChanged();
 		}
 		return result;
@@ -306,5 +552,20 @@ browser.commands.onCommand.addListener((command, tab) => {
 
 browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
 	if (changeInfo.status !== 'loading') return;
-	browser.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+	getPowerState().then(state => browser.action.setBadgeText({ tabId, text: state.enabled ? '' : 'OFF' })).catch(() => {});
+});
+
+// A tab can emit several loading updates for one reload. Only a committed
+// top-level navigation advances the one-document recovery pause.
+browser.webNavigation.onCommitted?.addListener(({ tabId, frameId }) => {
+	if (frameId !== 0) return;
+	popupAudioDocumentEpochs.set(tabId, (popupAudioDocumentEpochs.get(tabId) || 0) + 1);
+	const recovery = playbackRecoveryTabs.get(tabId);
+	if (recovery?.awaitingReload) recovery.awaitingReload = false;
+	else playbackRecoveryTabs.delete(tabId);
+});
+
+browser.tabs.onRemoved?.addListener(tabId => {
+	playbackRecoveryTabs.delete(tabId);
+	popupAudioDocumentEpochs.delete(tabId);
 });

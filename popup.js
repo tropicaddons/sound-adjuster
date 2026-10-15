@@ -62,6 +62,15 @@ let currentControlsNode = null;
 const allElements = document.getElementById('all-elements');
 const elementsTpl = document.getElementById('elements-tpl');
 const themeToggle = document.getElementById('theme-toggle');
+const powerToggle = document.getElementById('power-toggle');
+const powerStatusText = document.getElementById('power-status');
+let powerStatus = { eligible: false, enabled: false };
+let powerChangeInFlight = false;
+
+function acceptPowerStatus(status) {
+	if ((status.revision ?? 0) < (powerStatus.revision ?? 0)) return;
+	powerStatus = status;
+}
 const siteFooter = document.querySelector('.site-footer');
 const siteHostname = document.querySelector('.site-hostname');
 const siteProfileToggle = document.querySelector('.site-profile-toggle');
@@ -92,6 +101,8 @@ let noMediaStateVisible = false;
 let autoMediaScanTimer = null;
 let autoMediaScanInFlight = false;
 let audioSettingsQueue = Promise.resolve();
+let audioApplicationFailed = false;
+let audioProfileSaveFailed = false;
 let mediaRefreshTimer = null;
 let levelMeterTimer = null;
 let profileOperationQueue = Promise.resolve();
@@ -198,6 +209,56 @@ async function loadNamedProfilesStatus() {
 	}
 }
 
+async function loadPowerStatus() {
+	try {
+		return await sendUiMessage({ action: 'getPowerState', tabId: activeTab.id });
+	} catch (error) {
+		console.warn('Unable to read the power state:', error);
+		return { eligible: false, enabled: false };
+	}
+}
+
+function updatePowerButton() {
+	powerToggle.disabled = powerChangeInFlight || powerStatus.eligible !== true;
+	powerToggle.setAttribute('aria-pressed', String(powerStatus.enabled === true));
+	const label = powerStatus.enabled ? 'Turn off audio adjustments on all tabs' : 'Turn on audio adjustments on all tabs';
+	powerToggle.title = label;
+	powerToggle.setAttribute('aria-label', label);
+}
+
+function showPowerSyncStatus(status) {
+	powerStatusText.hidden = status.synchronized !== false;
+	if (!powerStatusText.hidden) powerStatusText.textContent = 'Some audio players did not receive the power change. Reload the affected tabs to finish applying it.';
+}
+
+powerToggle.addEventListener('click', async () => {
+	if (powerChangeInFlight || powerStatus.eligible !== true) return;
+	powerChangeInFlight = true;
+	updatePowerButton();
+	allElements.inert = true;
+	rememberSite.disabled = true;
+	powerStatusText.hidden = true;
+	try {
+		// Finish the current input/Remember writes before suspending processing.
+		await audioSettingsQueue;
+		await profileOperationQueue;
+		acceptPowerStatus(await sendUiMessage({ action: 'setPowerState', tabId: activeTab.id, enabled: !powerStatus.enabled }));
+		showPowerSyncStatus(powerStatus);
+		renderFrameResults(await scanMedia());
+	} catch (error) {
+		console.warn('Unable to change Sound Adjuster power:', error);
+		acceptPowerStatus(await loadPowerStatus());
+		powerStatusText.textContent = 'Couldn’t change power on every tab. Try again.';
+		powerStatusText.hidden = false;
+		scheduleMediaRefresh();
+	} finally {
+		powerChangeInFlight = false;
+		allElements.inert = false;
+		updatePowerButton();
+		updateSiteFooter();
+	}
+});
+
 // Theme Management
 function getPopupStorage() {
 	try {
@@ -264,6 +325,28 @@ browser.storage.onChanged.addListener((changes, areaName) => {
 });
 loadSupportPreference();
 
+const POWER_BUTTON_KEY = 'soundAdjuster.showPowerButton';
+function setPowerButtonVisibility(shown) {
+	powerToggle.hidden = shown === false;
+	if (powerStatus.eligible && !powerStatus.enabled) showPowerDisabledState();
+}
+
+async function loadPowerButtonPreference() {
+	try {
+		const stored = await browser.storage.local.get(POWER_BUTTON_KEY);
+		setPowerButtonVisibility(stored[POWER_BUTTON_KEY]);
+	} catch (error) {
+		console.warn('Unable to load the power button preference:', error);
+	}
+}
+
+browser.storage.onChanged.addListener((changes, areaName) => {
+	if (areaName === 'local' && changes[POWER_BUTTON_KEY]) {
+		setPowerButtonVisibility(changes[POWER_BUTTON_KEY].newValue);
+	}
+});
+loadPowerButtonPreference();
+
 function getActiveSiteKey() {
 	const knownSiteKey = siteProfileStatus?.siteKey || siteExceptionStatus?.siteKey || namedProfilesStatus?.siteKey;
 	if (knownSiteKey) return knownSiteKey;
@@ -293,6 +376,7 @@ function setFooterFeedback(text, state = 'idle', timeout = 0) {
 }
 
 function showCurrentProfileStatus() {
+	if (['Couldn’t apply audio settings', 'Some media could not be adjusted'].includes(profileStatusText?.textContent)) return;
 	setFooterFeedback('');
 }
 
@@ -490,6 +574,7 @@ function updateSiteFooter() {
 	siteProfileToggle.hidden = noMediaStateVisible || !profileEligible
 		|| (!hasEditableControls && siteProfileStatus?.remembered !== true);
 	rememberSite.checked = siteProfileStatus?.remembered === true;
+	rememberSite.disabled = !powerStatus.enabled || powerChangeInFlight;
 
 	disableSiteButton.disabled = siteExceptionStatus?.eligible !== true;
 	disableSiteButton.textContent = siteExceptionStatus?.disabled
@@ -518,53 +603,41 @@ function setMoreMenuOpen(open) {
 }
 
 async function persistCurrentProfile() {
+	// The background now owns the acknowledged write. This helper only refreshes
+	// the open popup; its lifetime is no longer part of persistence.
 	if (!rememberSite?.checked || !currentControlsNode) return;
 	const feedbackId = ++profileFeedbackSequence;
+	await audioSettingsQueue;
+	if (audioApplicationFailed || audioProfileSaveFailed) return;
 	try {
-		const settings = readSettingsFromControls(currentControlsNode);
-		siteProfileStatus = await queueProfileOperation(() => (
-			sendProfileMessage('saveSiteProfile', settings)
-		));
+		siteProfileStatus = await sendProfileMessage('getSiteProfile');
 		if (feedbackId === profileFeedbackSequence) showCurrentProfileStatus();
-	} catch (error) {
-		console.warn('Unable to save the site profile:', error);
-		if (feedbackId === profileFeedbackSequence) {
-			setFooterFeedback('Couldn’t save settings', 'error');
-		}
-	}
+	} catch (error) { console.warn('Unable to refresh the site profile:', error); }
 	updateSiteFooter();
 }
 
 function applySettingsToAllMedia(settings) {
-	const updates = { ...settings };
-	const operation = audioSettingsQueue.then(async () => {
-		const sendToCurrentFrames = async () => {
-			const frames = await scanMedia();
-			if (frames.some(frame => !frame.available && frameMap.get(frame.frameId)?.size)) {
-				throw new Error('Unable to reach the current media frame');
-			}
-			return Promise.all(frames.filter(frame => frame.available).map(async frame => {
-				try {
-					const result = await browser.tabs.sendMessage(tid, {
-						action: 'applyFrameSettings', settings: updates
-					}, { frameId: frame.frameId });
-					if (result?.success !== true) throw new Error(result?.error || 'Audio settings were not applied');
-					return result;
-				} catch (error) {
-					const liveFrames = await browser.webNavigation.getAllFrames({ tabId: tid });
-					if (!liveFrames.some(live => live.frameId === frame.frameId)) return { success: true, frameRemoved: true };
-					throw error;
-				}
-			}));
-		};
-		let results = await sendToCurrentFrames();
-		// An iframe may be replaced between enumeration and delivery. Retry the
-		// current frame set once, rather than sending to removed player IDs.
-		if (results.some(result => result.frameRemoved)) results = await sendToCurrentFrames();
-		return results;
+	const errorText = 'Couldn’t apply audio settings';
+	const partialText = 'Some media could not be adjusted';
+	// Send before any await or popup-owned queue: the background must receive
+	// even the final slider event when the popup closes immediately afterwards.
+	const frameIds = frameScanDiagnostics.filter(frame => frame.available || frameMap.get(frame.frameId)?.size)
+		.slice(0, MAX_SCANNED_FRAMES).map(frame => frame.frameId);
+	const operation = browser.runtime.sendMessage({ action: 'applyPopupAudio',
+		tabId: activeTab.id, tabUrl: activeTab.url, incognito: activeTab.incognito === true,
+		frameIds, settings: { ...settings }
+	}).then(result => {
+		if (result?.success !== true) throw new Error('Audio settings were not applied');
+		audioApplicationFailed = false;
+		audioProfileSaveFailed = result.rememberError === true;
+		if (audioProfileSaveFailed) setFooterFeedback('Couldn’t save settings', 'error');
+		else if (result.partial) setFooterFeedback(partialText, 'info');
+		else if ([errorText, partialText].includes(profileStatusText?.textContent)) setFooterFeedback('');
+		return result.results;
 	}).catch(error => {
+		audioApplicationFailed = true;
 		console.warn('Unable to apply current frame settings:', error);
-		setFooterFeedback('Couldn’t apply audio settings', 'error');
+		setFooterFeedback(errorText, 'error');
 		throw error;
 	});
 	audioSettingsQueue = operation.catch(() => {});
@@ -815,13 +888,15 @@ function showNoMediaState() {
 function showUnavailableMediaState(capability) {
 	stopLevelMonitoring();
 	const descriptions = {
+		'power-state-unavailable': 'Sound Adjuster could not check its power status. Reopen it to retry.',
 		'audio-resource-limit': 'Too many media players are playing at once. Pause other players and scan again to adjust this one.',
 		'site-exception-unavailable': 'Sound Adjuster could not check your disabled-site preferences. Scan again to retry.',
 		'site-restricted': 'This site prevents Sound Adjuster from safely accessing its audio. Playback continues normally.',
 		'cross-origin-media': 'Firefox blocks the audio access needed for this media source. Playback continues normally.',
 		'protected-media': 'This media uses protected playback, so Firefox does not allow extensions to adjust its audio. Playback continues normally.',
 		'audio-graph-failed': 'Sound Adjuster could not create a safe audio connection. Playback continues normally.',
-		'web-audio-unavailable': 'Firefox does not provide the audio access needed for this media. Playback continues normally.'
+		'web-audio-unavailable': 'Firefox does not provide the audio access needed for this media. Playback continues normally.',
+		'media-reload-required': 'This player changed to a source Firefox cannot process. Turning Sound Adjuster off cannot restore this player. Reload to restore audio; adjustments will pause on this tab until its next navigation.'
 	};
 
 	currentControlsNode = null;
@@ -833,6 +908,18 @@ function showUnavailableMediaState(capability) {
 		'Audio controls unavailable',
 		descriptions[capability?.reason] || 'Sound Adjuster cannot safely process this media. Playback continues normally.'
 	));
+	if (capability?.reason === 'media-reload-required') {
+		const reload = document.createElement('button');
+		reload.type = 'button';
+		reload.className = 'power-settings-button';
+		reload.textContent = 'Reload to restore audio';
+		reload.addEventListener('click', async () => {
+			reload.disabled = true;
+			try { await sendContextMessage('recoverMediaPlayback'); window.close(); }
+			catch (_) { reload.disabled = false; setFooterFeedback('Couldn’t reload this tab', 'error'); }
+		});
+		allElements.lastElementChild.appendChild(reload);
+	}
 	updateSiteFooter();
 }
 
@@ -850,11 +937,46 @@ function showSiteDisabledState() {
 	stopAutoMediaScan();
 	allElements.innerHTML = '';
 	allElements.classList.add('is-empty');
-	allElements.appendChild(createEmptyState(
-		'Sound Adjuster is off',
-		'This site is in your exceptions. Re-enable it from the ⋯ menu when you want to use audio controls again.',
+	const emptyState = createEmptyState(
+		siteExceptionStatus?.temporary ? 'Audio adjustments paused on this tab' : 'Sound Adjuster is off on this site',
+		siteExceptionStatus?.temporary
+			? 'Audio adjustments are paused on this tab after restoring playback. Your saved settings are kept. Navigate to another page or use the ⋯ menu to enable adjustments again.'
+			: 'This site is in your exceptions. Re-enable it from the ⋯ menu when you want to use audio controls again.',
 		false
-	));
+	);
+	emptyState.classList.add('is-site-off');
+	allElements.appendChild(emptyState);
+	updateSiteFooter();
+}
+
+function showPowerDisabledState() {
+	stopLevelMonitoring();
+	stopAutoMediaScan();
+	currentControlsNode = null;
+	noMediaStateVisible = false;
+	allElements.innerHTML = '';
+	allElements.classList.add('is-empty');
+	const emptyState = createEmptyState(
+		powerStatus.eligible ? 'Sound Adjuster is off' : 'Power status unavailable',
+		powerStatus.eligible
+			? powerToggle.hidden
+				? 'Audio adjustments are off on all tabs. Your settings are kept. Enable Show power button in Settings to turn them back on.'
+				: 'Audio adjustments are off on all tabs. Your settings are kept. Use the power button to turn them back on.'
+			: 'Reopen Sound Adjuster to check its power status.',
+		false
+	);
+	if (powerStatus.eligible) emptyState.classList.add('is-power-off');
+	if (powerStatus.eligible && powerToggle.hidden) {
+		const settingsButton = document.createElement('button');
+		settingsButton.type = 'button';
+		settingsButton.className = 'power-settings-button';
+		settingsButton.textContent = 'Open settings';
+		settingsButton.addEventListener('click', () => browser.runtime.openOptionsPage().catch(error => {
+			console.warn('Unable to open Settings:', error);
+		}));
+		emptyState.appendChild(settingsButton);
+	}
+	allElements.appendChild(emptyState);
 	updateSiteFooter();
 }
 
@@ -1047,6 +1169,16 @@ function scheduleMediaRefresh() {
 }
 
 function renderFrameResults(frameResults) {
+		const needsReload = frameResults.some(frame => Object.values(frame.media || {}).some(media => media.capability?.reason === 'media-reload-required'));
+		const hasEditableMedia = frameResults.some(frame => Object.values(frame.media || {}).some(media => ['full', 'pending'].includes(media.capability?.mode)));
+		if (needsReload && (!powerStatus.enabled || !hasEditableMedia)) {
+			showUnavailableMediaState({ reason: 'media-reload-required' });
+			return;
+		}
+		if (!powerStatus.enabled) {
+			showPowerDisabledState();
+			return;
+		}
 		let elCount = 0;
 
 		// Clear existing frame map
@@ -1077,7 +1209,9 @@ function renderFrameResults(frameResults) {
 			referenceMediaKey = `${referenceEntry.fid}:${referenceEntry.elid}`;
 
 			if (referenceMedia.capability?.mode === 'disabled') {
-				if (referenceMedia.capability.reason === 'site-exception-unavailable') showUnavailableMediaState(referenceMedia.capability);
+				if (referenceMedia.capability.reason === 'power-off') showPowerDisabledState();
+				else if (referenceMedia.capability.reason === 'power-state-unavailable') showUnavailableMediaState(referenceMedia.capability);
+				else if (referenceMedia.capability.reason === 'site-exception-unavailable') showUnavailableMediaState(referenceMedia.capability);
 				else showSiteDisabledState();
 				return;
 			}
@@ -1315,6 +1449,16 @@ function renderFrameResults(frameResults) {
 
 browser.runtime.onMessage.addListener((message, sender) => {
 	if (sender.id !== browser.runtime.id) return undefined;
+	if (message?.action === 'powerStateChanged') {
+		if (sender.tab) return undefined;
+		acceptPowerStatus({ eligible: message.eligible === true, enabled: message.enabled === true,
+			revision: message.revision, synchronized: message.synchronized });
+		showPowerSyncStatus(powerStatus);
+		updatePowerButton();
+		if (!powerStatus.enabled) showPowerDisabledState();
+		else scheduleMediaRefresh();
+		return undefined;
+	}
 	if (message?.action === 'shortcutApplied') {
 		if (sender.tab) return undefined;
 		if (message.tabId === tid) syncControlsFromShortcut(message.settings);
@@ -1346,11 +1490,14 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 		scanMedia(),
 		loadSiteProfileStatus(),
 		loadSiteExceptionStatus(),
-		loadNamedProfilesStatus()
-	]).then(([frameResults, profileStatus, exceptionStatus, profilesStatus]) => {
+		loadNamedProfilesStatus(),
+		loadPowerStatus()
+	]).then(([frameResults, profileStatus, exceptionStatus, profilesStatus, loadedPowerStatus]) => {
 		siteProfileStatus = profileStatus;
 		siteExceptionStatus = exceptionStatus;
 		namedProfilesStatus = profilesStatus;
+		acceptPowerStatus(loadedPowerStatus);
+		updatePowerButton();
 		renderFrameResults(frameResults);
 	}).catch(err => {
 		console.error('Error scanning media:', err);

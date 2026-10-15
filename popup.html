@@ -13,6 +13,9 @@
 
   <div id="elements-pane">
     <header>
+      <button id="power-toggle" type="button" disabled aria-pressed="true" title="Sound Adjuster power" aria-label="Sound Adjuster power">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 3v9" /></svg>
+      </button>
       <h1>Sound Adjuster</h1>
 		<a class="support-button" href="https://buymeacoffee.com/tropicaddons" target="_blank" rel="noopener noreferrer" aria-label="Support Sound Adjuster">
 			<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -26,6 +29,7 @@
 			</svg>
 		</a>
     </header>
+    <p id="power-status" role="status" hidden></p>
 	<template id="elements-tpl">
 			<label class="gain-control">
 				<span>Gain</span>

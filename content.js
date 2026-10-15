@@ -19,6 +19,8 @@ const mediaIds = new WeakMap();
 const activeMediaElements = new Map();
 const MAX_TRACKED_MEDIA_ELEMENTS = 128;
 const MAX_SCANNED_MEDIA_ELEMENTS = 128;
+const PAUSED_GRAPH_RELEASE_DELAY_MS = 1000;
+const PLAYBACK_FADE_SECONDS = 0.006;
 const PROCESSING_NODE_KEYS = ['Gain', 'Analyser', 'Pan', 'Split', 'Merge', 'Output',
   'EqBass', 'EqLowMid', 'EqMid', 'EqHighMid', 'EqTreble'];
 let nextMediaId = 0;
@@ -29,10 +31,73 @@ let mediaChangeTimer = null;
 let frameSettings = { ...DEFAULT_SETTINGS };
 let hasUserSettings = false;
 let frameDisabled = true;
+let siteDisabled = true;
+let powerEnabled = false;
+let powerStateKnown = false;
+let powerRevision = -1;
 let siteExceptionKnown = false;
 let initializationPromise = null;
 let mediaObserver = null;
 const mediaEventRoots = new WeakSet();
+let initialSettingsKnown = false;
+let userSettingsChanged = false;
+let initialRetryTimer = null;
+let initialRetryCount = 0;
+let shadowDiscoveryTimer = null;
+let siteStatusRevision = 0;
+let pageActive = true;
+
+function scheduleShadowDiscovery(delay = 1000) {
+	if (!pageActive || !mediaObserver || !hasUserSettings || frameDisabled) {
+		clearTimeout(shadowDiscoveryTimer);
+		shadowDiscoveryTimer = null;
+		return;
+	}
+	if (shadowDiscoveryTimer !== null && delay > 0) return;
+	clearTimeout(shadowDiscoveryTimer);
+	shadowDiscoveryTimer = setTimeout(() => {
+		shadowDiscoveryTimer = null;
+		if (!hasUserSettings || frameDisabled) return;
+		// Attaching a shadow root does not notify the surrounding document's
+		// observer. Discover new roots without reapplying existing graphs.
+		const roots = [];
+		const elements = collectMediaElements(document, roots);
+		if (roots.some(root => !mediaEventRoots.has(root))) {
+			observeMediaRoots(roots);
+			for (const el of elements) registerMediaElement(el);
+			notifyMediaChanged();
+		}
+		scheduleShadowDiscovery();
+	}, delay);
+}
+
+function scheduleInitialStateRetry() {
+	if (!pageActive || initialRetryTimer !== null || initialRetryCount >= 3
+		|| initialSettingsKnown && siteExceptionKnown && powerStateKnown) return;
+	initialRetryTimer = setTimeout(async () => {
+		initialRetryTimer = null;
+		initialRetryCount += 1;
+		await Promise.all([
+			initialSettingsKnown ? undefined : loadInitialSettings(),
+			siteExceptionKnown ? undefined : loadSiteExceptionStatus(),
+			powerStateKnown ? undefined : loadPowerState()
+		]);
+		if (!pageActive) return;
+		refreshDisabledState();
+		scheduleInitialStateRetry();
+	}, [250, 1000, 3000][initialRetryCount]);
+}
+
+// Read only by the extension's isolated-world probe after a failed delivery.
+// A loaded script or a media tag alone is not evidence of unapplied audio.
+globalThis.soundAdjusterPowerNeedsSync = (enabled, revision) => {
+	const graphs = [...activeMediaElements.values()].filter(el => (el.xSoundFixerGain || el.xSoundFixerIdleOutput) && el.xSoundFixerContext);
+	if (!graphs.length) return false;
+	if (enabled) return !siteDisabled && (!powerEnabled || powerRevision < revision);
+	return graphs.some(el => el.xSoundFixerIdleOutput ? el.xSoundFixerIdleOutput.gain.value !== 1 : el.xSoundFixerGain.gain.value !== 1 || el.xSoundFixerPan.pan.value !== 0
+		|| el.xSoundFixerOutput.channelCount !== 2 || el.xSoundFixerFlipped === true
+		|| ['EqBass', 'EqLowMid', 'EqMid', 'EqHighMid', 'EqTreble'].some(key => el[`xSoundFixer${key}`].gain.value !== 0));
+};
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -70,7 +135,21 @@ function isBasicModeHost(hostname) {
 }
 
 function getMediaCapability(el) {
+	// A bound MediaElement source cannot be detached back to native playback.
+	// Check changed resources even while OFF; a neutral gain cannot undo CORS.
+	const source = el.currentSrc || el.src;
+	let unsafeSource = false;
+	try {
+		const url = source && new URL(source, document.baseURI || window.location.href);
+		unsafeSource = Boolean(url && ['http:', 'https:'].includes(url.protocol)
+			&& url.origin !== (window.origin || window.location.origin) && el.crossOrigin === null);
+	} catch (_) { /* The ordinary capability check below handles unknown sources. */ }
+	if (el.xSoundFixerSource && (unsafeSource || el.mediaKeys)) {
+		return { mode: 'unsupported', reason: 'media-reload-required' };
+	}
 	if (frameDisabled) {
+		if (!powerStateKnown) return { mode: 'disabled', reason: 'power-state-unavailable' };
+		if (!powerEnabled) return { mode: 'disabled', reason: 'power-off' };
 		return { mode: 'disabled', reason: siteExceptionKnown ? 'site-exception' : 'site-exception-unavailable' };
 	}
 
@@ -90,7 +169,6 @@ function getMediaCapability(el) {
     return { mode: 'basic', reason: 'protected-media' };
   }
 
-  const source = el.currentSrc || el.src;
   if (!source) {
     return { mode: 'pending', reason: 'media-not-ready' };
   }
@@ -139,7 +217,7 @@ function initializeAudioGraph(el, elid) {
     const pan = context.createStereoPanner();
     const split = context.createChannelSplitter(2);
     const merge = context.createChannelMerger(2);
-    const output = context.createGain();
+    const output = el.xSoundFixerIdleOutput || context.createGain();
     output.channelCountMode = 'explicit';
     output.channelInterpretation = 'speakers';
     output.channelCount = 2;
@@ -200,6 +278,7 @@ function initializeAudioGraph(el, elid) {
     el.xSoundFixerSplit = split;
     el.xSoundFixerMerge = merge;
     el.xSoundFixerOutput = output;
+    delete el.xSoundFixerIdleOutput;
     el.xSoundFixerEqBass = eqBass;
     el.xSoundFixerEqLowMid = eqLowMid;
     el.xSoundFixerEqMid = eqMid;
@@ -208,6 +287,7 @@ function initializeAudioGraph(el, elid) {
     el.xSoundFixerFlipped = false;
     el.xSoundFixerMode = 'full';
     activeAudioGraphCount += 1;
+    fadePlaybackOutput(el, isMediaPlaying(el));
 
     return { success: true, capability: { mode: 'full', reason: null } };
   } catch (error) {
@@ -290,6 +370,24 @@ function resumeAudioContext(el) {
   } catch (error) {
     return false;
   }
+}
+
+function fadePlaybackOutput(el, playing, waitForPlaying = false) {
+  const gain = el.xSoundFixerOutput?.gain;
+  const context = el.xSoundFixerContext;
+  if (!gain || !context) return;
+  if (typeof gain.cancelScheduledValues !== 'function') {
+    gain.value = playing && !waitForPlaying ? 1 : 0;
+    return;
+  }
+  const now = context.currentTime;
+  const start = playing ? 0 : gain.value;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(start, now);
+  // play can precede decoded audio (buffering). Hold the onset gate until
+  // playing, so the ramp does not finish before the first sample arrives.
+  if (waitForPlaying) return;
+  gain.linearRampToValueAtTime(playing ? 1 : 0, now + PLAYBACK_FADE_SECONDS);
 }
 
 function notifyBadge(settings = frameSettings, disabled = frameDisabled) {
@@ -415,6 +513,7 @@ function applySettings(elid, updates, rememberForFrame = true) {
   }
 
   if (rememberForFrame) {
+    userSettingsChanged = true;
     frameSettings = mergeSettings(frameSettings, updates);
     hasUserSettings = true;
     notifyBadge(frameSettings);
@@ -425,6 +524,7 @@ function applySettings(elid, updates, rememberForFrame = true) {
 
 function setElementSiteDisabled(el, disabled) {
 	el.xSoundFixerDisabled = disabled === true;
+	syncIdleOutput(el);
 	const desiredSettings = el.xSoundFixerSettings || { ...frameSettings };
 
 	if (el.xSoundFixerContext && el.xSoundFixerGain) {
@@ -442,14 +542,29 @@ function setElementSiteDisabled(el, disabled) {
 }
 
 function setSiteDisabled(disabled) {
+	siteStatusRevision += 1;
 	siteExceptionKnown = true;
-	frameDisabled = disabled === true;
+	siteDisabled = disabled === true;
+	return refreshDisabledState();
+}
+
+function setPowerEnabled(enabled, revision = powerRevision) {
+	if (revision < powerRevision) return { success: true, disabled: frameDisabled };
+	powerRevision = revision;
+	powerStateKnown = true;
+	powerEnabled = enabled === true;
+	return refreshDisabledState();
+}
+
+function refreshDisabledState() {
+	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown;
 	const media = [];
 	scanMediaElements();
 	for (const el of activeMediaElements.values()) {
 		media.push(setElementSiteDisabled(el, frameDisabled));
 	}
 	notifyBadge(frameSettings, frameDisabled);
+	scheduleShadowDiscovery();
 	return { success: true, disabled: frameDisabled, media };
 }
 
@@ -478,9 +593,11 @@ function applyShortcut(command, resetSettings) {
   }
 
   frameSettings = mergeSettings(DEFAULT_SETTINGS, next);
+  userSettingsChanged = true;
   hasUserSettings = true;
   const media = elements.map(el => applySettingsToElement(el, frameSettings));
   notifyBadge(frameSettings);
+  scheduleShadowDiscovery();
   return { success: true, applied: media.some(result => result?.applied), settings: { ...frameSettings } };
 }
 
@@ -489,9 +606,11 @@ function applyFrameSettings(updates) {
   // media here, and keep the requested frame settings across replacement gaps.
   scanMediaElements();
   frameSettings = mergeSettings(frameSettings, updates);
+  userSettingsChanged = true;
   hasUserSettings = true;
   const results = [...activeMediaElements.values()].map(el => applySettingsToElement(el, frameSettings));
   notifyBadge(frameSettings, frameDisabled);
+  scheduleShadowDiscovery();
   return {
     success: results.every(result => result.success === true),
     applied: results.some(result => result.applied === true),
@@ -581,23 +700,65 @@ function resolveMediaElement(id) {
 
 function releaseMediaElement(el) {
   activeMediaElements.delete(getMediaId(el));
-  releaseAudioGraph(el);
+  releaseAudioGraph(el, false);
 }
 
-function releaseAudioGraph(el) {
+function releaseAudioGraph(el, keepIdleGuard = true) {
   clearTimeout(el.xSoundFixerRestoreTimer);
-  if (!el.xSoundFixerGain) return;
-  // Closing the context or disconnecting the source alone would silence this
-  // element permanently. Keep its native-equivalent route alive for playback.
+  clearTimeout(el.xSoundFixerPauseTimer);
+  el.xSoundFixerPauseTimer = null;
+  if (!el.xSoundFixerGain) {
+    if ((!keepIdleGuard || el.isConnected === false) && el.xSoundFixerIdleOutput) {
+      el.xSoundFixerIdleOutput.disconnect();
+      delete el.xSoundFixerIdleOutput;
+      el.xSoundFixerSource.disconnect();
+      el.xSoundFixerSource.connect(el.xSoundFixerContext.destination);
+    }
+    return;
+  }
+  // Release filters/analysis while idle, but do not expose a unity-gain route
+  // before a background-throttled autoplay callback can restore the settings.
   el.xSoundFixerSource.disconnect();
-  el.xSoundFixerSource.connect(el.xSoundFixerContext.destination);
+  if (keepIdleGuard && el.isConnected !== false) {
+    el.xSoundFixerIdleOutput = el.xSoundFixerOutput;
+    syncIdleOutput(el);
+    el.xSoundFixerIdleOutput.disconnect();
+    el.xSoundFixerSource.connect(el.xSoundFixerIdleOutput);
+    el.xSoundFixerIdleOutput.connect(el.xSoundFixerContext.destination);
+  } else {
+    el.xSoundFixerSource.connect(el.xSoundFixerContext.destination);
+  }
   for (const key of PROCESSING_NODE_KEYS) {
     const node = el[`xSoundFixer${key}`];
-    if (node) node.disconnect();
+    if (node && node !== el.xSoundFixerIdleOutput) node.disconnect();
     delete el[`xSoundFixer${key}`];
   }
   delete el.xSoundFixerFlipped;
   activeAudioGraphCount -= 1;
+}
+
+function syncIdleOutput(el) {
+  const gain = el.xSoundFixerIdleOutput?.gain;
+  if (!gain) return;
+  el.xSoundFixerIdleOutput.channelCount = 2;
+  const value = frameDisabled || !hasUserSettings ? 1 : 0;
+  if (typeof gain.cancelScheduledValues === 'function') {
+    const now = el.xSoundFixerContext.currentTime;
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(value, now);
+  } else gain.value = value;
+}
+
+function schedulePausedGraphRelease(el) {
+  if (!el.xSoundFixerGain || el.xSoundFixerPauseTimer != null) return;
+  // Keep the route and filter history across a quick pause/replay. Rewiring
+  // every pause cuts filter tails and rebuilds the graph at the next onset.
+  el.xSoundFixerPauseTimer = setTimeout(() => {
+    el.xSoundFixerPauseTimer = null;
+    if (isMediaPlaying(el)) return;
+    releaseAudioGraph(el);
+    notifyMediaChanged();
+  }, PAUSED_GRAPH_RELEASE_DELAY_MS);
 }
 
 function pruneRemovedMedia() {
@@ -607,8 +768,7 @@ function pruneRemovedMedia() {
       releaseMediaElement(el);
       changed = true;
     } else if (!isMediaPlaying(el) && el.xSoundFixerGain) {
-      releaseAudioGraph(el);
-      changed = true;
+      schedulePausedGraphRelease(el);
     }
   }
   while (activeMediaElements.size > MAX_TRACKED_MEDIA_ELEMENTS) {
@@ -641,6 +801,11 @@ function scheduleSettingsRestore(el) {
 
 function registerMediaElement(el) {
   if (!isMediaElement(el) || el.isConnected === false) return;
+  syncIdleOutput(el);
+  if (isMediaPlaying(el)) {
+    clearTimeout(el.xSoundFixerPauseTimer);
+    el.xSoundFixerPauseTimer = null;
+  }
   if (!assignMediaId(el)) return;
 	el.xSoundFixerDisabled = frameDisabled;
   if (registeredMediaElements.has(el)) {
@@ -659,15 +824,22 @@ function registerMediaElement(el) {
   }
   el.addEventListener('play', () => {
     resumeAudioContext(el);
+    fadePlaybackOutput(el, true, true);
     scheduleSettingsRestore(el);
   });
   for (const event of ['pause', 'ended', 'emptied']) {
     el.addEventListener(event, () => {
-      if (!isMediaPlaying(el)) releaseAudioGraph(el);
+      if (!isMediaPlaying(el)) {
+        fadePlaybackOutput(el, false);
+        schedulePausedGraphRelease(el);
+      }
       notifyMediaChanged();
     });
   }
-  el.addEventListener('playing', () => resumeAudioContext(el));
+  el.addEventListener('playing', () => {
+    resumeAudioContext(el);
+    fadePlaybackOutput(el, true);
+  });
   el.addEventListener('volumechange', () => resumeAudioContext(el));
 
   if (hasUserSettings && !frameDisabled) {
@@ -687,7 +859,8 @@ function getMediaState(el) {
     isPlaying: el.currentTime > 0 && !el.paused && !el.ended && el.readyState > 2,
     settings: { ...settings },
     capability,
-		siteDisabled: frameDisabled
+		siteDisabled,
+		powerEnabled
   };
 }
 
@@ -719,16 +892,20 @@ function getMediaSnapshot() {
 
 async function loadInitialSettings() {
   try {
-    const [siteResult, globalResult] = await Promise.all([
+    const results = await Promise.allSettled([
       browser.runtime.sendMessage({ action: 'getSiteProfile' }),
       browser.runtime.sendMessage({ action: 'getGlobalSettings' })
     ]);
-    const initialSettings = siteResult?.remembered && siteResult.profile?.settings
+    const [siteResult, globalResult] = results.map(result => result.status === 'fulfilled' ? result.value : null);
+    const siteKnown = typeof siteResult?.remembered === 'boolean';
+    const globalKnown = typeof globalResult?.enabled === 'boolean';
+    initialSettingsKnown = siteKnown && globalKnown;
+    const initialSettings = siteKnown && siteResult?.remembered && siteResult.profile?.settings
       ? siteResult.profile.settings
-      : globalResult?.enabled && globalResult.settings
+      : siteKnown && globalResult?.enabled && globalResult.settings
         ? globalResult.settings
         : null;
-    if (initialSettings) {
+    if (initialSettings && !userSettingsChanged) {
       frameSettings = mergeSettings(DEFAULT_SETTINGS, initialSettings);
       hasUserSettings = true;
       notifyBadge(frameSettings);
@@ -739,21 +916,46 @@ async function loadInitialSettings() {
 }
 
 async function loadSiteExceptionStatus() {
+	const revision = siteStatusRevision;
 	try {
 		const result = await browser.runtime.sendMessage({ action: 'getSiteExceptionStatus' });
+		if (revision !== siteStatusRevision) return;
 		if (!result || typeof result.disabled !== 'boolean') throw new Error('Invalid site exception response');
 		siteExceptionKnown = true;
-		frameDisabled = result?.disabled === true;
+		siteDisabled = result?.disabled === true;
 	} catch (error) {
+		if (revision !== siteStatusRevision) return;
 		console.warn('Unable to load the site exception status:', error);
 		siteExceptionKnown = false;
-		frameDisabled = true;
+		siteDisabled = true;
 	}
+	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown;
+}
+
+async function loadPowerState() {
+	try {
+		const result = await browser.runtime.sendMessage({ action: 'getPowerState' });
+		if (!result?.eligible || typeof result.enabled !== 'boolean') throw new Error('Power state unavailable');
+		const revision = Number.isSafeInteger(result.revision) ? result.revision : 0;
+		if (revision < powerRevision) return;
+		powerRevision = revision;
+		powerStateKnown = true;
+		powerEnabled = result.enabled;
+	} catch (error) {
+		console.warn('Unable to read the power state:', error);
+		powerStateKnown = false;
+		powerEnabled = false;
+	}
+	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown;
 }
 
 async function handleMessage(message) {
   try {
     if (initializationPromise) await initializationPromise;
+		if (!powerStateKnown && message.action !== 'setPowerEnabled') {
+			await loadPowerState();
+			if (powerStateKnown) refreshDisabledState();
+		}
     if (!siteExceptionKnown && message.action !== 'setSiteDisabled') {
       await loadSiteExceptionStatus();
       if (siteExceptionKnown && !hasUserSettings) await loadInitialSettings();
@@ -786,6 +988,8 @@ async function handleMessage(message) {
 
 		case 'setSiteDisabled':
 			return setSiteDisabled(message.disabled);
+		case 'setPowerEnabled':
+			return setPowerEnabled(message.enabled, message.revision);
 
       case 'getStatus': {
         const mediaMap = scanMediaElements();
@@ -841,7 +1045,8 @@ function registerMediaFromNode(node) {
 async function initialize() {
 	await Promise.all([
 		loadInitialSettings(),
-		loadSiteExceptionStatus()
+		loadSiteExceptionStatus(),
+		loadPowerState()
 	]);
   notifyBadge(frameSettings, frameDisabled);
   scanMediaElements();
@@ -877,11 +1082,31 @@ async function initialize() {
 
   mediaObserver = observer;
   scanMediaElements();
+	// A user gesture can create an entire closed player root in one task.
+	// Inspect after that task, rather than waiting for the next periodic pass.
+	for (const event of ['click', 'keydown']) {
+		document.addEventListener(event, () => scheduleShadowDiscovery(0), true);
+	}
+	scheduleShadowDiscovery();
+	scheduleInitialStateRetry();
 
   window.soundAdjusterObserver = observer;
 }
 
 browser.runtime.onMessage.addListener(handleMessage);
+
+window.addEventListener('pageshow', event => {
+	pageActive = true;
+	if (event.persisted) loadPowerState().then(() => { refreshDisabledState(); scheduleInitialStateRetry(); });
+});
+
+window.addEventListener('pagehide', () => {
+	pageActive = false;
+	clearTimeout(initialRetryTimer);
+	initialRetryTimer = null;
+	clearTimeout(shadowDiscoveryTimer);
+	shadowDiscoveryTimer = null;
+});
 
 if (document.readyState === 'loading') {
   initializationPromise = new Promise(resolve => {

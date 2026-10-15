@@ -54,11 +54,15 @@
 			<div class="card-header">
 				<div>
 					<h2 id="appearance-title">Appearance</h2>
-					<p>Choose whether the support heart appears in the popup.</p>
+					<p>Choose which optional buttons appear in the popup.</p>
 				</div>
-				<label class="enable-defaults"><input type="checkbox" class="show-support-button" checked> Show support button</label>
+				<div class="appearance-options">
+					<label class="enable-defaults"><input type="checkbox" class="show-support-button" checked> Show support button</label>
+					<label class="enable-defaults"><input type="checkbox" class="show-power-button" checked disabled> Show power button</label>
+				</div>
 			</div>
 			<p class="support-preference-status" role="status" aria-live="polite"></p>
+			<p class="power-preference-status" role="status" aria-live="polite"></p>
 		</section>
 
 		<section class="settings-card shortcuts-card" aria-labelledby="shortcuts-title">

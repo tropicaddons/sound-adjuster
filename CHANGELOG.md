@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.6.0 — 2026-10-16
+
+- Added a power button to turn audio adjustments on or off across all tabs while keeping your settings. Your last choice is remembered, and the button can be hidden in Settings.
+- Improved Remember so the last applied settings are saved even if you close the popup immediately after a change.
+- Improved volume consistency when pausing, resuming, and returning to autoplaying videos.
+- Made audio controls more responsive on pages with many media players.
+- Disabling Sound Adjuster on a site now applies to its other open regular tabs.
+- Added clearer playback warnings and a reload option to restore audio when a player switches to an unsupported source.
+- Preserved unsaved changes in Settings when saved profiles are updated elsewhere.
+
+Reload existing media tabs after updating. Website access must be enabled for automatic audio adjustments.
+
 ## 2.5.3 — 2026-10-08
 
 - Restored the **Remember** switch and reliable saving and restoring of site settings.
