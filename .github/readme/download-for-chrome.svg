@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="45" viewBox="0 0 150 45" role="img">
+  <title>Download for Chrome</title>
+  <rect x=".5" y=".5" width="149" height="44" rx="5.5" fill="#080808" stroke="#8b8b8b"/>
+  <g transform="translate(11 7.5)">
+    <path fill="#ea4335" d="M15 0a15 15 0 0 1 13 7.5H15a7.5 7.5 0 0 0-6.5 11.25L2 7.5A15 15 0 0 1 15 0Z"/>
+    <path fill="#fbbc05" d="M28 7.5A15 15 0 0 1 15 30l6.5-11.25A7.5 7.5 0 0 0 15 7.5Z"/>
+    <path fill="#34a853" d="M15 30A15 15 0 0 1 2 7.5l6.5 11.25a7.5 7.5 0 0 0 13 0Z"/>
+    <circle cx="15" cy="15" r="7.2" fill="#4285f4" stroke="#fff" stroke-width="1.1"/>
+  </g>
+  <g fill="#fff" font-family="Arial, Helvetica, sans-serif">
+    <text x="50" y="15" font-size="9.5" letter-spacing=".55">DOWNLOAD FOR</text>
+    <text x="49" y="34" font-size="22" font-weight="600">Chrome</text>
+  </g>
+</svg>

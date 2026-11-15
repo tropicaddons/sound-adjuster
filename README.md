@@ -7,7 +7,7 @@ Turn up quiet videos, balance your headphones, and fine-tune audio in your brows
 <p align="center">
   <a href="https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster/"><img src=".github/readme/firefox-add-on.png" alt="Get Sound Adjuster from Firefox Add-ons" height="45"></a>
   &nbsp;
-  <a href="https://github.com/tropicaddons/sound-adjuster/releases/tag/chrome-v2.6.0"><img src=".github/readme/get-it-on-github.png" alt="Download the Sound Adjuster Chrome ZIP on GitHub" height="45"></a>
+  <a href="https://github.com/tropicaddons/sound-adjuster/releases/tag/chrome-v2.6.0"><img src=".github/readme/download-for-chrome.svg" alt="Download Sound Adjuster for Chrome from GitHub" height="45"></a>
 </p>
 
 <p align="center">Chrome ZIP · <a href="#chrome">Manual installation</a></p>
