@@ -51,6 +51,14 @@ popupScrollport.addEventListener('wheel', event => {
 
 let tid = 0;
 let activeTab = null;
+let captureStatus = null;
+let captureChangeInFlight = false;
+// Opening the toolbar action grants access to this tab. Try the fallback once
+// per popup, and never restart automatically after an explicit stop.
+let automaticCaptureAttempted = false;
+const TAB_AUDIO_REFERENCE = 'tab-audio';
+const TAB_AUDIO_FALLBACK_REASONS = new Set(['site-restricted', 'cross-origin-media', 'protected-media',
+	'unknown-media-source', 'audio-graph-failed', 'web-audio-unavailable']);
 let siteProfileStatus = { eligible: false, remembered: false, profile: null };
 let siteExceptionStatus = { eligible: false, siteKey: null, disabled: false };
 let namedProfilesStatus = { eligible: false, siteKey: null, profiles: [] };
@@ -81,6 +89,7 @@ const moreMenuButton = document.querySelector('.more-menu-button');
 const moreMenu = document.querySelector('.more-menu');
 const menuMain = document.querySelector('.menu-main');
 const disableSiteButton = document.querySelector('.menu-disable-site');
+const stopTabAudioButton = document.querySelector('.menu-stop-tab-audio');
 const profileDefault = document.querySelector('.profile-default');
 const profileList = document.querySelector('.profile-list');
 const profileScrollHint = document.querySelector('.profile-scroll-hint');
@@ -580,6 +589,8 @@ function updateSiteFooter() {
 	disableSiteButton.textContent = siteExceptionStatus?.disabled
 		? 'Enable on this site'
 		: 'Disable on this site';
+	stopTabAudioButton.hidden = captureStatus?.state !== 'running';
+	stopTabAudioButton.disabled = captureChangeInFlight;
 	newProfileButton.disabled = !hasEditableControls || namedProfilesStatus?.eligible !== true;
 	newProfileButton.disabled = newProfileButton.disabled
 		|| (namedProfilesStatus.profiles || []).length >= MAX_NAMED_PROFILES_PER_SITE;
@@ -621,11 +632,13 @@ function applySettingsToAllMedia(settings) {
 	const partialText = 'Some media could not be adjusted';
 	// Send before any await or popup-owned queue: the background must receive
 	// even the final slider event when the popup closes immediately afterwards.
-	const frameIds = frameScanDiagnostics.filter(frame => frame.available || frameMap.get(frame.frameId)?.size)
-		.slice(0, MAX_SCANNED_FRAMES).map(frame => frame.frameId);
+	const tabAudio = referenceMediaKey === TAB_AUDIO_REFERENCE;
+	const frameIds = tabAudio ? [0]
+		: frameScanDiagnostics.filter(frame => frame.available || frameMap.get(frame.frameId)?.size)
+			.slice(0, MAX_SCANNED_FRAMES).map(frame => frame.frameId);
 	const operation = browser.runtime.sendMessage({ action: 'applyPopupAudio',
 		tabId: activeTab.id, tabUrl: activeTab.url, incognito: activeTab.incognito === true,
-		frameIds, settings: { ...settings }
+		frameIds, ...(tabAudio ? { tabAudio } : {}), settings: { ...settings }
 	}).then(result => {
 		if (result?.success !== true) throw new Error('Audio settings were not applied');
 		audioApplicationFailed = false;
@@ -723,6 +736,7 @@ async function toggleSiteException() {
 		siteExceptionStatus = await sendContextMessage(
 			shouldDisable ? 'addSiteException' : 'removeSiteException'
 		);
+		if (shouldDisable) captureStatus = null;
 		await notifyFramesSiteDisabled(shouldDisable);
 		const frameResults = await scanMedia();
 		renderFrameResults(frameResults);
@@ -787,6 +801,10 @@ function initializeSiteFooterActions() {
 	disableSiteButton.addEventListener('click', async () => {
 		setMoreMenuOpen(false);
 		await toggleSiteException();
+	});
+	stopTabAudioButton.addEventListener('click', () => {
+		setMoreMenuOpen(false);
+		changeTabAudio('stopTabCapture', stopTabAudioButton);
 	});
 	newProfileButton.addEventListener('click', showProfileNameForm);
 	profilesMenuButton.addEventListener('click', () => {
@@ -882,7 +900,62 @@ function showNoMediaState() {
 			: 'Start playing audio or video. It will appear here automatically.'
 	));
 	scheduleAutoMediaScan();
+	addTabAudioButton(allElements.lastElementChild);
 	updateSiteFooter();
+}
+
+async function loadTabAudioStatus() {
+	try { return await sendContextMessage('getTabCaptureStatus'); }
+	catch (_) { return null; }
+}
+
+async function maybeStartTabAudio(frames) {
+	if (automaticCaptureAttempted || captureChangeInFlight || captureStatus?.state === 'running'
+		|| !powerStatus.enabled || siteExceptionStatus?.disabled !== false || !getActiveSiteKey()) return;
+	const media = frames.flatMap(frame => Object.values(sanitizeScannedMedia(frame.media)));
+	const reference = selectReferenceMedia(media.map(entry => ({ media: entry })))?.media;
+	if (!TAB_AUDIO_FALLBACK_REASONS.has(reference?.capability?.reason)) return;
+
+	automaticCaptureAttempted = true;
+	captureChangeInFlight = true;
+	try {
+		captureStatus = await sendContextMessage('startTabCapture');
+	} catch (error) {
+		// A failed automatic start leaves the existing manual retry available.
+		console.warn('Unable to start tab audio automatically:', error);
+	} finally {
+		captureChangeInFlight = false;
+	}
+}
+
+async function changeTabAudio(action, button) {
+	if (captureChangeInFlight) return;
+	automaticCaptureAttempted = true;
+	captureChangeInFlight = true;
+	button.disabled = true;
+	try {
+		captureStatus = await sendContextMessage(action);
+		renderFrameResults(await scanMedia());
+	} catch (error) {
+		console.warn('Unable to change tab audio:', error);
+		setFooterFeedback(action === 'startTabCapture' ? 'Couldn’t start tab audio' : 'Couldn’t stop tab audio', 'error');
+	} finally {
+		captureChangeInFlight = false;
+		button.disabled = false;
+		updateSiteFooter();
+	}
+}
+
+function addTabAudioButton(container) {
+	if (!container || !powerStatus.enabled || siteExceptionStatus?.disabled || !getActiveSiteKey()) return;
+	const button = document.createElement('button');
+	button.id = 'start-tab-audio';
+	button.type = 'button';
+	button.className = 'power-settings-button';
+	button.textContent = 'Adjust tab audio';
+	button.title = 'Process the audio of this tab locally until you stop or leave the page';
+	button.addEventListener('click', () => changeTabAudio('startTabCapture', button));
+	container.appendChild(button);
 }
 
 function showUnavailableMediaState(capability) {
@@ -892,11 +965,11 @@ function showUnavailableMediaState(capability) {
 		'audio-resource-limit': 'Too many media players are playing at once. Pause other players and scan again to adjust this one.',
 		'site-exception-unavailable': 'Sound Adjuster could not check your disabled-site preferences. Scan again to retry.',
 		'site-restricted': 'This site prevents Sound Adjuster from safely accessing its audio. Playback continues normally.',
-		'cross-origin-media': 'Firefox blocks the audio access needed for this media source. Playback continues normally.',
-		'protected-media': 'This media uses protected playback, so Firefox does not allow extensions to adjust its audio. Playback continues normally.',
+		'cross-origin-media': 'Chrome blocks direct audio access to this media source. You can adjust the sound of the whole tab.',
+		'protected-media': 'This player uses protected playback. You can try adjusting the sound of the whole tab.',
 		'audio-graph-failed': 'Sound Adjuster could not create a safe audio connection. Playback continues normally.',
-		'web-audio-unavailable': 'Firefox does not provide the audio access needed for this media. Playback continues normally.',
-		'media-reload-required': 'This player changed to a source Firefox cannot process. Turning Sound Adjuster off cannot restore this player. Reload to restore audio; adjustments will pause on this tab until its next navigation.'
+		'web-audio-unavailable': 'This player does not provide direct audio access. You can try adjusting the sound of the whole tab.',
+		'media-reload-required': 'This player changed to a source Chrome cannot process. Turning Sound Adjuster off cannot restore this player. Reload to restore audio; adjustments will pause on this tab until its next navigation.'
 	};
 
 	currentControlsNode = null;
@@ -919,6 +992,8 @@ function showUnavailableMediaState(capability) {
 			catch (_) { reload.disabled = false; setFooterFeedback('Couldn’t reload this tab', 'error'); }
 		});
 		allElements.lastElementChild.appendChild(reload);
+	} else if (TAB_AUDIO_FALLBACK_REASONS.has(capability?.reason)) {
+		addTabAudioButton(allElements.lastElementChild);
 	}
 	updateSiteFooter();
 }
@@ -950,6 +1025,7 @@ function showSiteDisabledState() {
 }
 
 function showPowerDisabledState() {
+	captureStatus = null;
 	stopLevelMonitoring();
 	stopAutoMediaScan();
 	currentControlsNode = null;
@@ -990,13 +1066,14 @@ function startLevelMonitoring(node) {
 	const indicator = node?.querySelector('.level-indicator');
 	if (!indicator || !referenceMediaKey) return;
 
+	const tabAudio = referenceMediaKey === TAB_AUDIO_REFERENCE;
 	const separator = referenceMediaKey.indexOf(':');
 	const fid = Number.parseInt(referenceMediaKey.slice(0, separator), 10);
 	const elid = referenceMediaKey.slice(separator + 1);
 
 	const refresh = async () => {
 		try {
-			const result = await browser.tabs.sendMessage(tid, {
+			const result = tabAudio ? (await loadTabAudioStatus())?.level : await browser.tabs.sendMessage(tid, {
 				action: 'getAudioLevel',
 				elid
 			}, { frameId: fid });
@@ -1047,7 +1124,7 @@ async function recoverMediaFrame(frameId) {
 				func: () => globalThis.soundAdjusterContentLoaded === true });
 			if (probe[0]?.error) throw new Error(String(probe[0].error));
 			if (probe[0]?.result === true) throw new Error('content-script-already-loaded');
-			const injected = await browser.scripting.executeScript({ target, files: ['content.js'] });
+			const injected = await browser.scripting.executeScript({ target, files: ['extension-api.js', 'content.js'] });
 			if (injected[0]?.error) throw new Error(String(injected[0].error));
 		})();
 		frameRecoveryPromises.set(frameId, attempt);
@@ -1132,6 +1209,7 @@ async function scanForNewMedia() {
 		if (noMediaStateVisible && countScannedMedia(frameResults) > 0) {
 			noMediaStateVisible = false;
 			stopAutoMediaScan();
+			await maybeStartTabAudio(frameResults);
 			renderFrameResults(frameResults);
 		}
 	} catch (error) {
@@ -1149,10 +1227,12 @@ function scheduleMediaRefresh() {
 		try {
 			await audioSettingsQueue;
 			const frames = await scanMedia();
+			await maybeStartTabAudio(frames);
 			const entries = frames.flatMap(frame => Object.entries(frame.media || {}).map(([id, media]) => ({
 				key: `${frame.frameId}:${id}`, media
 			})));
 			const reference = selectReferenceMedia(entries);
+			if (captureStatus?.state === 'running' && currentControlsNode) return;
 			if (currentControlsNode && reference?.key === referenceMediaKey
 				&& ['full', 'pending'].includes(reference.media.capability?.mode)) {
 				// Keep an active slider/text field intact when only a preview player changed.
@@ -1169,9 +1249,10 @@ function scheduleMediaRefresh() {
 }
 
 function renderFrameResults(frameResults) {
+		const tabAudio = captureStatus?.state === 'running' && !siteExceptionStatus?.disabled;
 		const needsReload = frameResults.some(frame => Object.values(frame.media || {}).some(media => media.capability?.reason === 'media-reload-required'));
 		const hasEditableMedia = frameResults.some(frame => Object.values(frame.media || {}).some(media => ['full', 'pending'].includes(media.capability?.mode)));
-		if (needsReload && (!powerStatus.enabled || !hasEditableMedia)) {
+		if (needsReload && !tabAudio && (!powerStatus.enabled || !hasEditableMedia)) {
 			showUnavailableMediaState({ reason: 'media-reload-required' });
 			return;
 		}
@@ -1192,7 +1273,7 @@ function renderFrameResults(frameResults) {
 			elCount += mediaMap.size; // Count total elements
 		}
 
-		if (elCount == 0) {
+		if (!tabAudio && elCount === 0) {
 			showNoMediaState();
 		} else {
 			noMediaStateVisible = false;
@@ -1205,8 +1286,8 @@ function renderFrameResults(frameResults) {
 			}
 
 			const referenceEntry = selectReferenceMedia(scannedMedia);
-			const referenceMedia = referenceEntry.media;
-			referenceMediaKey = `${referenceEntry.fid}:${referenceEntry.elid}`;
+			const referenceMedia = tabAudio ? { settings: captureStatus.settings } : referenceEntry.media;
+			referenceMediaKey = tabAudio ? TAB_AUDIO_REFERENCE : `${referenceEntry.fid}:${referenceEntry.elid}`;
 
 			if (referenceMedia.capability?.mode === 'disabled') {
 				if (referenceMedia.capability.reason === 'power-off') showPowerDisabledState();
@@ -1447,7 +1528,7 @@ function renderFrameResults(frameResults) {
 		}
 	}
 
-browser.runtime.onMessage.addListener((message, sender) => {
+globalThis.SoundAdjusterMessaging.addListener((message, sender) => {
 	if (sender.id !== browser.runtime.id) return undefined;
 	if (message?.action === 'powerStateChanged') {
 		if (sender.tab) return undefined;
@@ -1462,6 +1543,12 @@ browser.runtime.onMessage.addListener((message, sender) => {
 	if (message?.action === 'shortcutApplied') {
 		if (sender.tab) return undefined;
 		if (message.tabId === tid) syncControlsFromShortcut(message.settings);
+		return undefined;
+	}
+	if (message?.action === 'tabCaptureStopped') {
+		if (sender.tab || message.tabId !== tid) return undefined;
+		captureStatus = null;
+		scheduleMediaRefresh();
 		return undefined;
 	}
 	if (message?.action !== 'mediaElementsChanged') return undefined;
@@ -1491,13 +1578,17 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 		loadSiteProfileStatus(),
 		loadSiteExceptionStatus(),
 		loadNamedProfilesStatus(),
-		loadPowerStatus()
-	]).then(([frameResults, profileStatus, exceptionStatus, profilesStatus, loadedPowerStatus]) => {
+		loadPowerStatus(),
+		loadTabAudioStatus()
+	]).then(async ([frameResults, profileStatus, exceptionStatus, profilesStatus, loadedPowerStatus, loadedCaptureStatus]) => {
 		siteProfileStatus = profileStatus;
 		siteExceptionStatus = exceptionStatus;
 		namedProfilesStatus = profilesStatus;
 		acceptPowerStatus(loadedPowerStatus);
+		captureStatus = loadedCaptureStatus;
+		automaticCaptureAttempted ||= captureStatus?.state === 'running';
 		updatePowerButton();
+		await maybeStartTabAudio(frameResults);
 		renderFrameResults(frameResults);
 	}).catch(err => {
 		console.error('Error scanning media:', err);

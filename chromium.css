@@ -1,0 +1,50 @@
+/* Chromium range rendering. Layout, colors, and UI remain in shared popup.css. */
+html {
+  width: 360px;
+  color-scheme: dark;
+}
+
+html.light-theme {
+  color-scheme: light;
+}
+
+.more-menu .menu-stop-tab-audio[hidden] {
+  display: none;
+}
+
+#popup-scrollport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted) var(--app-bg);
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, var(--accent) var(--range-progress, 0%), var(--track) var(--range-progress, 0%));
+}
+
+.equalizer-controls input[type="range"] {
+  /* Modern vertical ranges avoid the old native slider-vertical offset. */
+  appearance: none;
+  -webkit-appearance: none;
+  width: 21px;
+  background: transparent;
+}
+
+.equalizer-controls input[type="range"]::-webkit-slider-runnable-track {
+  width: 4px;
+  height: 76px;
+  background: linear-gradient(to top, var(--accent) var(--range-progress, 50%), var(--track) var(--range-progress, 50%));
+}
+
+.equalizer-controls input[type="range"]::-webkit-slider-thumb {
+  width: 21px;
+  height: 21px;
+  /* Center a 21px thumb on the 4px track, matching Firefox's outer thumb. */
+  margin-left: -8.5px;
+  margin-top: 0;
+}
+
+input[type="range"]:not([orient="vertical"])::-webkit-slider-thumb {
+  width: 21px;
+  height: 21px;
+  margin-top: -8.5px;
+}

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.0 for Chrome — 2026-11-15
+
+- Opening Sound Adjuster on a player it cannot adjust directly now starts tab audio automatically. The manual button remains available to retry.
+
 ## 2.6.0 — 2026-10-16
 
 - Added a power button to turn audio adjustments on or off across all tabs while keeping your settings. Your last choice is remembered, and the button can be hidden in Settings.

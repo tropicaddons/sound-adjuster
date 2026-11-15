@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sound Adjuster</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="chromium.css">
 </head>
 <body>
   <div id="popup-scrollport">
@@ -130,6 +131,7 @@
 								</button>
 								<div class="menu-separator" role="separator"></div>
 								<button type="button" class="menu-disable-site" role="menuitem">Disable on this site</button>
+								<button type="button" class="menu-stop-tab-audio" role="menuitem" hidden>Stop tab audio</button>
 								<button type="button" class="menu-copy-diagnostics" role="menuitem">Copy diagnostics</button>
 								<div class="menu-separator" role="separator"></div>
 								<button type="button" class="menu-manage-exceptions" role="menuitem">Settings and exceptions</button>
@@ -170,6 +172,7 @@
 
   </div>
   </div>
+  <script src="extension-api.js"></script>
   <script src="popup-state.js"></script>
 	<script src="site-profiles.js"></script>
   <script src="popup.js"></script>

@@ -345,9 +345,9 @@ clearAudioDataButton.addEventListener('click', async () => {
 
 editShortcutsButton.addEventListener('click', async () => {
 	try {
-		await browser.commands.openShortcutSettings();
+		await browser.tabs.create({ url: 'chrome://extensions/shortcuts' });
 	} catch (error) {
-		console.warn('Unable to open Firefox shortcut settings:', error);
+		console.warn('Unable to open Chrome shortcut settings:', error);
 	}
 });
 

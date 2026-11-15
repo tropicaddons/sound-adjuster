@@ -2,11 +2,14 @@
   "manifest_version": 3,
   "name": "Sound Adjuster",
   "version": "2.6.0",
-  "description": "Boost and shape Firefox tab audio with up to 5× gain, stereo balance, a five-band EQ, local profiles, and shortcuts.",
+  "description": "Boost and shape tab audio with up to 5× gain, stereo balance, a five-band EQ, local profiles, and shortcuts.",
   "permissions": [
     "webNavigation",
     "scripting",
-    "storage"
+    "storage",
+    "activeTab",
+    "tabCapture",
+    "offscreen"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -15,23 +18,28 @@
     "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
   },
   "icons": {
-    "16": "icon.svg",
-    "48": "icon.svg",
-    "96": "icon.svg",
-    "128": "icon.svg"
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_end",
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "extension-api.js",
+        "content.js"
+      ],
+      "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
       "match_origin_as_fallback": true
     }
   ],
   "background": {
-    "scripts": ["popup-state.js", "site-profiles.js", "site-exceptions.js", "named-profiles.js", "global-settings.js", "audio-storage.js", "background.js"]
+    "service_worker": "service-worker.js"
   },
   "options_ui": {
     "page": "options.html",
@@ -41,35 +49,38 @@
     "default_popup": "popup.html",
     "default_title": "Sound Adjuster",
     "default_icon": {
-      "16": "icon.svg",
-      "48": "icon.svg",
-      "128": "icon.svg"
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
     }
   },
   "commands": {
     "increase-gain": {
-      "suggested_key": { "default": "Alt+Up" },
+      "suggested_key": {
+        "default": "Alt+Up"
+      },
       "description": "Increase Sound Adjuster gain"
     },
     "decrease-gain": {
-      "suggested_key": { "default": "Alt+Down" },
+      "suggested_key": {
+        "default": "Alt+Down"
+      },
       "description": "Decrease Sound Adjuster gain"
     },
     "reset-audio": {
-      "suggested_key": { "default": "Alt+Shift+0" },
+      "suggested_key": {
+        "default": "Alt+Shift+0"
+      },
       "description": "Reset Sound Adjuster settings"
     },
     "toggle-mono": {
-      "suggested_key": { "default": "Alt+Shift+M" },
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
       "description": "Toggle mono audio"
     }
   },
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "{072d02fa-46fc-4392-9571-a2fa1a693cd9}",
-      "data_collection_permissions": {
-        "required": ["none"]
-      }
-    }
-  }
+  "minimum_chrome_version": "124",
+  "incognito": "split"
 }

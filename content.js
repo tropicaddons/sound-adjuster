@@ -13,7 +13,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   eqTreble: 0
 });
 const NEUTRAL_SETTINGS = DEFAULT_SETTINGS;
-const BASIC_MODE_HOSTS = ['tiktok.com'];
+// Avoid binding Netflix's player before it attaches its protection keys.
+const BASIC_MODE_HOSTS = ['tiktok.com', 'netflix.com'];
 const registeredMediaElements = new WeakSet();
 const mediaIds = new WeakMap();
 const activeMediaElements = new Map();
@@ -31,6 +32,8 @@ let mediaChangeTimer = null;
 let frameSettings = { ...DEFAULT_SETTINGS };
 let hasUserSettings = false;
 let frameDisabled = true;
+let captureBypassed = false;
+let captureBypassRevision = 0;
 let siteDisabled = true;
 let powerEnabled = false;
 let powerStateKnown = false;
@@ -99,6 +102,9 @@ globalThis.soundAdjusterPowerNeedsSync = (enabled, revision) => {
 		|| ['EqBass', 'EqLowMid', 'EqMid', 'EqHighMid', 'EqTreble'].some(key => el[`xSoundFixer${key}`].gain.value !== 0));
 };
 
+globalThis.soundAdjusterCaptureNeedsSync = () => !captureBypassed
+	&& [...activeMediaElements.values()].some(el => el.xSoundFixerGain || el.xSoundFixerIdleOutput);
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -150,6 +156,7 @@ function getMediaCapability(el) {
 	if (frameDisabled) {
 		if (!powerStateKnown) return { mode: 'disabled', reason: 'power-state-unavailable' };
 		if (!powerEnabled) return { mode: 'disabled', reason: 'power-off' };
+		if (captureBypassed && !siteDisabled) return { mode: 'disabled', reason: 'tab-audio-active' };
 		return { mode: 'disabled', reason: siteExceptionKnown ? 'site-exception' : 'site-exception-unavailable' };
 	}
 
@@ -391,6 +398,7 @@ function fadePlaybackOutput(el, playing, waitForPlaying = false) {
 }
 
 function notifyBadge(settings = frameSettings, disabled = frameDisabled) {
+  if (captureBypassed) return;
   browser.runtime.sendMessage({
     action: 'updateBadge',
     settings: { ...settings },
@@ -557,7 +565,7 @@ function setPowerEnabled(enabled, revision = powerRevision) {
 }
 
 function refreshDisabledState() {
-	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown;
+	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown || captureBypassed;
 	const media = [];
 	scanMediaElements();
 	for (const el of activeMediaElements.values()) {
@@ -664,8 +672,9 @@ function observeMediaRoots(shadowRoots) {
   // Rebuild from connected roots so removed feed widgets are not retained.
   mediaObserver.disconnect();
   const options = { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] };
-  for (const root of [document.body, ...shadowRoots]) {
-    if (!root) continue;
+  // The parser may not have created a body yet at document_start.
+  mediaObserver.observe(document, options);
+  for (const root of shadowRoots) {
     mediaObserver.observe(root, options);
     if (!mediaEventRoots.has(root)) {
       root.addEventListener('play', handleMediaPlay, true);
@@ -917,19 +926,21 @@ async function loadInitialSettings() {
 
 async function loadSiteExceptionStatus() {
 	const revision = siteStatusRevision;
+	const captureRevision = captureBypassRevision;
 	try {
 		const result = await browser.runtime.sendMessage({ action: 'getSiteExceptionStatus' });
 		if (revision !== siteStatusRevision) return;
 		if (!result || typeof result.disabled !== 'boolean') throw new Error('Invalid site exception response');
 		siteExceptionKnown = true;
 		siteDisabled = result?.disabled === true;
+		if (captureRevision === captureBypassRevision) captureBypassed = result.captureBypass === true;
 	} catch (error) {
 		if (revision !== siteStatusRevision) return;
 		console.warn('Unable to load the site exception status:', error);
 		siteExceptionKnown = false;
 		siteDisabled = true;
 	}
-	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown;
+	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown || captureBypassed;
 }
 
 async function loadPowerState() {
@@ -946,7 +957,7 @@ async function loadPowerState() {
 		powerStateKnown = false;
 		powerEnabled = false;
 	}
-	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown;
+	frameDisabled = siteDisabled || !powerEnabled || !powerStateKnown || captureBypassed;
 }
 
 async function handleMessage(message) {
@@ -990,6 +1001,10 @@ async function handleMessage(message) {
 			return setSiteDisabled(message.disabled);
 		case 'setPowerEnabled':
 			return setPowerEnabled(message.enabled, message.revision);
+		case 'setTabCaptureBypass':
+			captureBypassRevision += 1;
+			captureBypassed = message.enabled === true;
+			return refreshDisabledState();
 
       case 'getStatus': {
         const mediaMap = scanMediaElements();
@@ -1049,7 +1064,6 @@ async function initialize() {
 		loadPowerState()
 	]);
   notifyBadge(frameSettings, frameDisabled);
-  scanMediaElements();
 
   // Capture play even for an element outside the bounded idle registry.
   document.addEventListener('play', handleMediaPlay, true);
@@ -1093,11 +1107,17 @@ async function initialize() {
   window.soundAdjusterObserver = observer;
 }
 
-browser.runtime.onMessage.addListener(handleMessage);
+const frameActions = new Set(['scanMedia', 'applySettings', 'applyFrameSettings', 'getAudioLevel',
+	'applyShortcut', 'setSiteDisabled', 'setPowerEnabled', 'setTabCaptureBypass', 'getStatus']);
+globalThis.SoundAdjusterMessaging.addListener((message, sender) => {
+	if (sender?.id !== browser.runtime.id || sender.tab || !frameActions.has(message?.action)) return undefined;
+	return handleMessage(message);
+});
 
 window.addEventListener('pageshow', event => {
 	pageActive = true;
-	if (event.persisted) loadPowerState().then(() => { refreshDisabledState(); scheduleInitialStateRetry(); });
+	if (event.persisted) Promise.all([loadPowerState(), loadSiteExceptionStatus()])
+		.then(() => { refreshDisabledState(); scheduleInitialStateRetry(); });
 });
 
 window.addEventListener('pagehide', () => {
@@ -1108,12 +1128,4 @@ window.addEventListener('pagehide', () => {
 	shadowDiscoveryTimer = null;
 });
 
-if (document.readyState === 'loading') {
-  initializationPromise = new Promise(resolve => {
-    document.addEventListener('DOMContentLoaded', () => {
-      initialize().finally(resolve);
-    }, { once: true });
-  });
-} else {
-  initializationPromise = initialize();
-}
+initializationPromise = initialize();
