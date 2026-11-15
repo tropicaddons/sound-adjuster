@@ -70,7 +70,7 @@ Saved profiles, global defaults, and site exceptions stay on your device. Privat
 - **Clear saved audio data** removes remembered settings, named profiles, global defaults, and site exceptions. Appearance preferences stay saved. Reload existing media tabs after clearing the data or updating the extension.
 - **Copy diagnostics** copies browser and extension information, a media count, and current settings. It leaves out hostnames, page paths, media URLs, and custom profile names.
 
-## Source and support
+## Source code
 
 <details>
 <summary>Load the Firefox version from source</summary>
@@ -83,4 +83,12 @@ Temporary add-ons are removed when Firefox closes. Firefox 2.6.0 automatically m
 
 </details>
 
-[Chrome source branch](https://github.com/tropicaddons/sound-adjuster/tree/chrome-2.6.0) · [Report an issue](https://github.com/tropicaddons/sound-adjuster/issues) · [Support development](https://buymeacoffee.com/tropicaddons) · [MIT license](LICENSE)
+[Chrome source branch](https://github.com/tropicaddons/sound-adjuster/tree/chrome-2.6.0) · [Report an issue](https://github.com/tropicaddons/sound-adjuster/issues)
+
+## License
+
+Sound Adjuster is released under the [MIT License](LICENSE). See also the [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Support
+
+If you find Sound Adjuster useful, you can [support its development on Buy Me a Coffee](https://buymeacoffee.com/tropicaddons).
