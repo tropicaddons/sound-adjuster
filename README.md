@@ -4,15 +4,15 @@ Turn up quiet videos, balance your headphones, and fine-tune audio in your brows
 
 ## Download
 
-[![Get Sound Adjuster from Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-BB3714?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster/) [![Download the Sound Adjuster ZIP for Chrome on GitHub](https://img.shields.io/badge/Chrome-GitHub_ZIP-2563EB?style=for-the-badge&logo=googlechrome&logoColor=white)](https://github.com/tropicaddons/sound-adjuster/releases/tag/chrome-v2.6.0)
+[![Get Sound Adjuster from Firefox Add-ons](./.github/readme/firefox.svg)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster/) &nbsp; [![Download the Sound Adjuster ZIP for Chrome on GitHub](./.github/readme/chrome.svg)](https://github.com/tropicaddons/sound-adjuster/releases/tag/chrome-v2.6.0)
+
+Chrome requires manual installation. [See setup steps](#chrome).
 
 ### Firefox
 
 Open Firefox Add-ons and click **Add to Firefox**.
 
 ### Chrome
-
-The Chrome version is available as a ZIP on GitHub and requires manual installation.
 
 1. On the release page, open **Assets**, download **`sound-adjuster-v2.6.0-chrome.zip`**, and extract it.
 2. Enter `chrome://extensions` in Chrome's address bar and turn on **Developer mode**.
