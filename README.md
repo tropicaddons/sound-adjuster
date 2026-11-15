@@ -1,51 +1,49 @@
 # Sound Adjuster
 
-Sound Adjuster is a privacy-friendly, open-source Firefox extension for boosting and shaping tab audio with up to 5× gain, stereo balance, and a five-band equalizer. Save your preferred settings for individual sites or as global defaults, and adjust audio without opening the popup using keyboard shortcuts.
+Turn up quiet videos, balance your headphones, and fine-tune audio in your browser. Sound Adjuster is a free, open-source extension for Firefox and Chrome. Audio runs locally, and saved settings stay on your device.
 
-[![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-blue?logo=firefox)](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-Support-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/tropicaddons)
+## Download
 
-[Website and interactive demo](https://sound-adjuster.github.io/) · [Listening guides](https://sound-adjuster.github.io/guides.html)
+### Firefox
 
-The demo lets you try the controls before installing. It processes a sample in your browser; its settings are separate from the extension.
+**[Get Sound Adjuster for Firefox](https://addons.mozilla.org/en-US/firefox/addon/sound-adjuster/)**
 
-## Features
+Open Firefox Add-ons and click **Add to Firefox**.
 
-- Volume gain from 0× to 5×
-- Live level/clipping indicator beside the gain value
-- Left and right stereo balance
-- Five-band equalizer with presets
-- Mono and channel-flip controls
-- Optional per-site profiles that restore settings after page reloads
-- Optional global defaults for gain, balance, equalizer, mono, and channel flip
-- Multiple named profiles for each site, with instant switching from the popup
-- Per-site disable list with a dedicated exceptions manager
-- One-click local diagnostics copy without media URLs
-- Light and dark themes shared by the popup and settings page
-- Automatic detection of media added after the page loads
-- Reliable audio recovery when an autoplay feed video is unmuted
-- Keyboard shortcuts for gain, reset, and mono controls
-- Toolbar badge for the active gain, mono, balance, or disabled state
+### Chrome
 
-## Settings
+**[Download Sound Adjuster for Chrome on GitHub](https://github.com/tropicaddons/sound-adjuster/releases/tag/chrome-v2.6.0)**
 
-Sound Adjuster starts **on by default**. The **power button** appears beside the popup title by default. To hide it, turn off **Show power button** under **Settings → Appearance**. Use it to turn processing off on every tab. Audio returns to normal while your gain, balance, EQ, mono, and channel-flip settings stay intact. Turn it back on to apply those settings again. Your last power choice stays saved across new tabs and browser restarts, so you only need to turn it on once. Reset and audio shortcuts are inactive while it is off. Remembered profiles, default audio settings, and disabled-site exceptions are preserved.
+The Chrome version is available as a ZIP on GitHub and requires manual installation.
 
-Open the popup's footer menu (**…**) and choose **Settings and exceptions**. The settings page brings together default audio settings, keyboard shortcuts, appearance preferences, and your disabled-site list.
+1. On the release page, open **Assets**, download **`sound-adjuster-v2.6.0-chrome.zip`**, and extract it.
+2. Enter `chrome://extensions` in Chrome's address bar and turn on **Developer mode**.
+3. Click **Load unpacked** and select the extracted folder that contains `manifest.json`.
+4. Open Chrome's **Extensions** menu and pin **Sound Adjuster** for easy access.
 
-Under **Default audio settings**, enable global defaults, choose your gain, stereo balance, equalizer preset, mono, and channel flip, then select **Save defaults**. These become the starting settings on supported sites without a remembered site profile. A remembered site profile takes priority; global defaults are not read in private windows.
+[Try the interactive demo](https://sound-adjuster.github.io/) · [Read the listening guides](https://sound-adjuster.github.io/guides.html)
 
-The **Enabled** switch saves immediately, including the currently displayed values. Turning it off makes Reset use the original audio settings without a separate Save click. After editing values, select **Save defaults**.
+## What you can do
 
-**Reset** and the reset shortcut return to your enabled global defaults, including every equalizer band. With global defaults off (or in a private window), they restore 1× gain, centered balance, Flat EQ, and mono/channel flip off. If **Remember** is on, the reset settings also replace that site's remembered settings.
+- **Adjust volume from 0× to 5×.** Watch the level indicator beside the gain control for clipping when you turn up the volume.
+- **Shape the sound.** Use the five-band equalizer and its presets, move the stereo balance left or right, switch to mono, or swap the left and right channels.
+- **Save a setup for each site.** Turn on **Remember**, save named profiles, or set global defaults for sites without a remembered profile.
+- **Make quick adjustments.** Use keyboard shortcuts or check the toolbar badge for the current gain, balance, mono, or disabled state.
 
-The settings page follows the light or dark theme selected in the popup. Under **Appearance**, turn off **Show support button** to hide the support heart permanently. The preference stays on your device, and the GitHub link remains available.
+## Save and manage your settings
 
-Under **Local audio data**, choose **Clear saved audio data** to remove remembered settings, named profiles, global defaults, and site exceptions. Appearance preferences remain. Saved audio data stays until you delete it or uninstall the extension. Reload existing media tabs after clearing data. In private windows, the settings page disables audio data controls and does not load normal-window saved settings.
+Open the popup's **…** menu and choose **Settings and exceptions** to manage global defaults, shortcuts, appearance, and sites where Sound Adjuster is disabled.
+
+- **Remember** restores your current gain, balance, EQ, mono, and channel settings on that site after a reload. Turning it off removes the saved automatic settings while keeping the current tab's sound.
+- **Profiles** lets you save and switch between up to 12 named setups per site. Use **Save current…** to save a setup and **Manage profiles** to remove one. Switching profiles is temporary unless **Remember** is on.
+- **Default audio settings** sets the starting sound for supported sites without a remembered profile. The **Enabled** switch saves the displayed values immediately. Use **Save defaults** when editing the controls afterward.
+- **Reset** restores your enabled global defaults, including each EQ band. With defaults off or in a private window, it restores 1× gain, centered balance, Flat EQ, with mono and channel flip off. When **Remember** is on, Reset also updates the site's saved settings.
+- **Power** turns sound adjustments on or off across tabs. Sound Adjuster starts on, and your last choice persists across browser restarts. While power is off, your settings stay saved and Reset and audio shortcuts are inactive.
+- **Disable on this site** turns off adjustments in regular open tabs for the current site. Manage disabled sites from **Settings and exceptions**.
+
+Under **Appearance**, you can hide the power or support button. The settings page follows the light or dark theme selected in the popup.
 
 ## Keyboard shortcuts
-
-Control the active tab without opening the popup:
 
 | Action | Default shortcut |
 | --- | --- |
@@ -54,51 +52,33 @@ Control the active tab without opening the popup:
 | Reset audio | `Alt+Shift+0` |
 | Toggle mono | `Alt+Shift+M` |
 
-The **Keyboard shortcuts** section in Settings shows your currently assigned keys. Choose **Edit shortcuts** to open Firefox's extension shortcut settings and change them. Shortcut changes to the audio also update the popup while it is open and the toolbar badge.
+Open **Settings and exceptions → Keyboard shortcuts** to see your assigned keys. Choose **Edit shortcuts** to change them in your browser.
 
-## Gain and level feedback
+## Playback compatibility
 
-The gain range is 0×–5×. The compact level indicator beside the gain value warns when the audio approaches clipping. Increasing gain can cause distortion; it does not restore detail missing from a quiet or distorted recording.
+Sound Adjuster can adjust standard HTML audio and video players, including players that load after the page opens. Some embedded or protected players need different handling depending on the browser.
 
-## Site profiles
+- **Firefox.** Allow website access in the extension's permissions so Sound Adjuster can find players. If the browser restricts audio processing on a player, the popup explains why the controls are unavailable. If a player switches sources and goes silent, use **Reload to restore audio**. This reloads the page and pauses adjustments for that load while keeping saved settings.
+- **Chrome.** For players that need tab audio mode, open Sound Adjuster from the toolbar once in each new tab. If capture does not start, choose **Adjust tab audio** in the popup. While adjusting tab audio, use the player's full-screen button to hide Chrome's address bar and tabs. Choose **Stop tab audio** to return to the tab's original output. Support for protected playback depends on the browser and playback setup.
 
-Turn on **Remember** in the footer to store the current gain, pan, mono, channel-flip, and equalizer settings for the active site. The switch reflects whether the profile is active; extra text appears only after an action or if storage fails. The profile is applied before the first media scan after a page reload, including media added later.
+## Privacy and troubleshooting
 
-Remembered settings and named profiles stay on the local machine and are never synchronized or used for tracking. Private windows and non-HTTP(S) pages do not read or write profiles. Turning off the switch removes the automatically restored settings without changing the sound in the current tab.
+Saved profiles, global defaults, and site exceptions stay on your device. Private windows do not load saved profiles or global defaults. Firefox and Chrome installations keep separate records. HTTP and HTTPS URLs and their matching `www.` hostnames share profiles and exceptions.
 
-HTTP and HTTPS addresses and the matching `www.` hostname continue to share profiles and exceptions. Firefox keeps audio records in extension-origin IndexedDB, separate from content-script storage. Existing records migrate automatically; appearance preferences remain in local extension storage. Older versions do not read this new audio store, so downgrading can make saved settings appear missing.
+- **Clear saved audio data** removes remembered settings, named profiles, global defaults, and site exceptions. Appearance preferences stay saved. Reload existing media tabs after clearing the data or updating the extension.
+- **Copy diagnostics** copies browser and extension information, a media count, and current settings. It leaves out hostnames, page paths, media URLs, and custom profile names.
 
-Open the footer menu and choose **Profiles** to save or switch complete audio setups for the active site. Each site can have up to 12 named profiles containing gain, pan, mono, channel flip, and every equalizer band. The profile screen opens in the same menu without changing the popup size. **Default** restores the original settings, **Save current…** stores the controls as they are, and **Manage profiles** lets you remove saved entries. Selecting a profile remains temporary unless **Remember** is enabled.
+## Source and support
 
-## Site exceptions and diagnostics
-
-Choose **Disable on this site** from the footer menu to add the current hostname to the local exceptions list. Existing processing is neutralized immediately in all regular open tabs for that site; after a tab reloads, Sound Adjuster skips creating an audio graph on that site. Manage or remove disabled sites from **Settings and exceptions**.
-
-**Copy diagnostics** copies the extension version, capability summary, media count, current settings, and browser information. It omits hostnames, page paths, media source URLs, and custom profile names.
-
-## Install from source
+<details>
+<summary>Load the Firefox version from source</summary>
 
 1. Download or clone this repository.
 2. Open `about:debugging#/runtime/this-firefox` in Firefox.
-3. Select **Load Temporary Add-on**.
-4. Choose `manifest.json` from the project folder.
+3. Select **Load Temporary Add-on** and choose `manifest.json` from the project folder.
 
-Temporary add-ons are removed when Firefox closes.
+Temporary add-ons are removed when Firefox closes. Firefox 2.6.0 automatically migrates existing audio settings to its extension database. If you downgrade, older versions may not see settings in the new database.
 
-Allow website access for Sound Adjuster in Firefox's extension permissions. Audio detection requires access to the page and its embedded players. Reload existing media tabs after updating the extension.
+</details>
 
-## Compatibility
-
-The extension works with standard HTML audio and video elements. Some sites use cross-origin media or protected playback that Firefox does not allow extensions to process safely. In those cases, Sound Adjuster leaves playback unchanged and explains why its audio controls are unavailable.
-
-If an already processed player switches to a restricted source, Firefox can silence its existing audio connection. Turning processing off cannot detach that connection. **Reload to restore audio** reloads the page and pauses adjustments on that tab for the new page load, preserving saved settings and other tabs. Use the footer menu to enable adjustments again, or navigate/reload once more. The recovery notice remains available even when global power is off.
-
-Each frame shares one audio context. Audio controls continue across long feeds and players that remain running in the background. A brief pause keeps the processing chain ready for replay. Longer pauses release the filters and analysis nodes while retaining a small output gate to prevent unadjusted audio before settings are restored. Turning processing off lets normal audio through. Removed players release their processing nodes; replaying or reinserting the same element reuses its source. Idle bookkeeping and media summaries are bounded to 128 entries, with recent playing media prioritized in summaries; settings still reach all tracked playing media. Tab scans cover up to 64 frames. If disabled-site preferences cannot be read, processing waits until a successful retry or reload.
-
-## Support
-
-Sound Adjuster is free and open source. If you find it useful, you can [support its continued development](https://buymeacoffee.com/tropicaddons).
-
-## License
-
-[MIT](LICENSE)
+[Chrome source branch](https://github.com/tropicaddons/sound-adjuster/tree/chrome-2.6.0) · [Report an issue](https://github.com/tropicaddons/sound-adjuster/issues) · [Support development](https://buymeacoffee.com/tropicaddons) · [MIT license](LICENSE)
